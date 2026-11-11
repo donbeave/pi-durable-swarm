@@ -2,7 +2,7 @@ import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SupervisorSummary } from './runtime.ts';
 
-export const SUPERVISOR_SNAPSHOT_VERSION = '0.6.1';
+export const SUPERVISOR_SNAPSHOT_VERSION = '0.6.2';
 export const STALE_AGE_SEC = 900;
 
 export function supervisorSummaryPath(workspace: string): string {

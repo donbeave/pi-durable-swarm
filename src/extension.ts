@@ -6,7 +6,7 @@ import { ELIGIBLE_MODELS, ROLES } from './policy.ts';
 import { openRuntime, type SwarmRuntime } from './runtime.ts';
 import type { AgentRecord } from './state.ts';
 import { clampJoinTimeout, formatJoin, sharedWriterWarning, substitutePrevious, type WriterPeer } from './workflow.ts';
-import { ackSupervisorDirective, prependSupervisorDirectives } from './supervisor-inbox.ts';
+import { ackSupervisorDirective, prependSupervisorDirectives, readSupervisorTurnMessage } from './supervisor-inbox.ts';
 import { writeSupervisorSnapshot } from './supervisor-snapshot.ts';
 
 async function writerWarning(active: SwarmRuntime, self: AgentRecord): Promise<string> {
@@ -76,6 +76,15 @@ export default function durableSwarm(pi: ExtensionAPI) {
 
   pi.on('session_start', async (_event, ctx) => {
     await initialize(ctx);
+  });
+
+  // Surface unacked supervisor directives at the start of every coordinator
+  // turn, before the agent loop (and any swarm tool call) runs. The returned
+  // message is appended to the run's context by Pi. `turn_start` cannot be
+  // used for this: its handler has no result channel to inject content.
+  pi.on('before_agent_start', async (_event, ctx) => {
+    const message = await readSupervisorTurnMessage(ctx.cwd);
+    return message ? { message } : undefined;
   });
   pi.on('session_shutdown', async () => {
     await runtime?.close();

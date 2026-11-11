@@ -41,6 +41,24 @@ export function formatSupervisorDirectives(directives: readonly SupervisorDirect
   return `${SUPERVISOR_INBOX_HEADER}\n${body}`;
 }
 
+export const SUPERVISOR_TURN_CUSTOM_TYPE = 'pi-durable-swarm-supervisor';
+
+export type SupervisorTurnMessage = { customType: string; content: string; display: boolean };
+
+export function supervisorTurnMessage(directives: readonly SupervisorDirective[]): SupervisorTurnMessage | undefined {
+  const content = formatSupervisorDirectives(directives);
+  if (!content) return undefined;
+  return { customType: SUPERVISOR_TURN_CUSTOM_TYPE, content, display: true };
+}
+
+export async function readSupervisorTurnMessage(workspace: string): Promise<SupervisorTurnMessage | undefined> {
+  try {
+    return supervisorTurnMessage(await readSupervisorDirectives(workspace));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function prependSupervisorDirectives(workspace: string, text: string): Promise<string> {
   try {
     const prefix = formatSupervisorDirectives(await readSupervisorDirectives(workspace));

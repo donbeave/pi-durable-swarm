@@ -61,11 +61,18 @@ Supervisors write directives as Markdown files in
 `<workspace>/.pi/durable-swarm/supervisor-inbox/SUP-*.md` (create the
 file; the directory is created lazily by the extension). Only
 `SUP-*.md` files are surfaced or ackable; other `.md` files in the
-inbox are ignored. On every `swarm_*`
-tool result, unacked `SUP-*.md` files are prepended as
-`SUPERVISOR DIRECTIVES (unacked):` with each file's first 40 lines, so
-the coordinator sees them at its next Pi tool call regardless of outer
-chat delivery. Acknowledge with `swarm_supervisor_ack {file}`, which
+inbox are ignored. Unacked `SUP-*.md` files are prepended as
+`SUPERVISOR DIRECTIVES (unacked):` with each file's first 40 lines on
+every `swarm_*` tool result, and — since 0.6.2 — also injected into the
+coordinator's context at the start of every turn via the Pi
+`before_agent_start` hook (a `pi-durable-swarm-supervisor` custom
+message returned before the agent loop runs), so a P0 directive is seen
+on the next user prompt even in a fresh session or a long non-swarm
+turn, before any swarm tool call. (`turn_start` was not usable for
+this: its handler has no result channel to inject content.) Limitation:
+`before_agent_start` fires once per user prompt, so a directive written
+mid-turn first surfaces at the next prompt or the next `swarm_*` tool
+result, whichever comes first. Acknowledge with `swarm_supervisor_ack {file}`, which
 moves the file to `supervisor-inbox/acked/<file>`; acked files are
 ignored. `swarm_join` clamps `timeout_ms` to at most 240000 ms (a
 missing or larger value uses 240000). `swarm_status` supervisor summary

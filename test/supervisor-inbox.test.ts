@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { ackSupervisorDirective, prependSupervisorDirectives, readSupervisorDirectives, supervisorInboxDir } from '../src/supervisor-inbox.ts';
+import { ackSupervisorDirective, prependSupervisorDirectives, readSupervisorDirectives, readSupervisorTurnMessage, supervisorInboxDir, supervisorTurnMessage, SUPERVISOR_TURN_CUSTOM_TYPE } from '../src/supervisor-inbox.ts';
+import durableSwarm from '../src/extension.ts';
 import { buildSupervisorSnapshot, supervisorSummaryPath, SUPERVISOR_SNAPSHOT_VERSION, writeSupervisorSnapshot } from '../src/supervisor-snapshot.ts';
 import type { SupervisorSummary } from '../src/runtime.ts';
 import { clampJoinTimeout, MAX_JOIN_TIMEOUT_MS } from '../src/workflow.ts';
@@ -55,6 +56,50 @@ test('non-SUP inbox file is NOT surfaced and NOT ackable, SUP- file is surfaced'
   assert.equal(existsSync(join(dir, 'note.md')), true);
   await ackSupervisorDirective(ws, 'SUP-directive.md');
   assert.equal(existsSync(join(dir, 'acked', 'SUP-directive.md')), true);
+});
+
+test('turn-start message: pure builder caps shape, undefined when no directives', async () => {
+  assert.equal(supervisorTurnMessage([]), undefined);
+  const msg = supervisorTurnMessage([{ file: 'SUP-a.md', text: 'do it' }]);
+  assert.deepEqual(msg, {
+    customType: SUPERVISOR_TURN_CUSTOM_TYPE,
+    content: 'SUPERVISOR DIRECTIVES (unacked):\n--- SUP-a.md ---\ndo it',
+    display: true,
+  });
+  const ws = mkdtempSync(join(tmpdir(), 'swarm-turn-'));
+  assert.equal(await readSupervisorTurnMessage(ws), undefined);
+  const dir = supervisorInboxDir(ws);
+  writeFileSync(join(dir, 'SUP-p0.md'), Array.from({ length: 50 }, (_, i) => `l${i}`).join('\n'));
+  writeFileSync(join(dir, 'note.md'), 'ignore me\n');
+  const fromDisk = await readSupervisorTurnMessage(ws);
+  assert.equal(fromDisk?.customType, SUPERVISOR_TURN_CUSTOM_TYPE);
+  assert.equal(fromDisk?.content.split('\n').length, 42);
+  assert.doesNotMatch(fromDisk?.content ?? '', /ignore me/);
+});
+
+test('extension before_agent_start handler injects unacked directives, silent after ack', async () => {
+  const ws = mkdtempSync(join(tmpdir(), 'swarm-hook-'));
+  const dir = supervisorInboxDir(ws);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'SUP-p0.md'), 'upgrade to 0.6.2 now\n');
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+  const fakePi = {
+    on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => {
+      handlers.set(event, handler);
+      return () => undefined;
+    },
+    registerTool: () => undefined,
+    registerCommand: () => undefined,
+  };
+  durableSwarm(fakePi as never);
+  const handler = handlers.get('before_agent_start');
+  assert.ok(handler, 'before_agent_start handler registered');
+  const event = { type: 'before_agent_start', prompt: 'hi', systemPrompt: '', systemPromptOptions: {} };
+  const result = (await handler(event, { cwd: ws })) as { message: { customType: string; content: string } } | undefined;
+  assert.equal(result?.message.customType, SUPERVISOR_TURN_CUSTOM_TYPE);
+  assert.match(result?.message.content ?? '', /^SUPERVISOR DIRECTIVES \(unacked\):\n--- SUP-p0\.md ---\nupgrade to 0\.6\.2 now/);
+  await ackSupervisorDirective(ws, 'SUP-p0.md');
+  assert.equal(await handler(event, { cwd: ws }), undefined);
 });
 
 test('snapshot file written with required keys', async () => {
