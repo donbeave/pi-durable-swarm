@@ -38,3 +38,14 @@ test('shared writer warning fires only for unisolated parallel writers in one cw
   assert.equal(sharedWriterWarning([writer('a'), writer('b', { write: false })], 'a'), undefined);
   assert.equal(sharedWriterWarning([writer('a'), writer('b', { cwd: '/other' })], 'a'), undefined);
 });
+
+test('ambiguous name error lists candidate ids, states and models', async () => {
+  const { ambiguousNameMessage } = await import('../src/workflow.ts');
+  const message = ambiguousNameMessage('w2', [
+    { id: 'fanout:a:0', state: 'failed', model: 'xiaomi-token-plan-sgp/mimo-v2.6-pro' },
+    { id: 'fanout:b:0', state: 'running', model: 'zai/glm-5.3' },
+  ]);
+  assert.match(message, /ambiguous \(2 workers\)/);
+  assert.match(message, /fanout:a:0 \[failed\] xiaomi-token-plan-sgp\/mimo-v2\.6-pro/);
+  assert.match(message, /fanout:b:0 \[running\] zai\/glm-5\.3/);
+});

@@ -166,7 +166,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
       const fleet = await active.snapshot();
       const agents = Object.values(fleet?.agents ?? {});
       const text = agents.length
-        ? agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking}`).join('\n')
+        ? agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`).join('\n')
         : 'No swarm workers yet.';
       return { content: [{ type: 'text' as const, text }], details: { count: agents.length } };
     },
@@ -354,7 +354,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
       }
       const fleet = await active.snapshot();
       const lines = Object.values(fleet?.agents ?? {}).map(
-        (agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking}`,
+        (agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`,
       );
       ctx.ui.notify(lines.length ? lines.join('\n') : 'No swarm workers yet.', 'info');
     },

@@ -262,3 +262,12 @@ sessions:
   `model_error` now appends the provider's error text (clipped) when the
   transcript has it, so the coordinator can choose between an explicit retry
   and an explicit reassignment to another eligible model without guessing.
+
+## Changes in 0.3.2
+
+- Ambiguous worker-name errors (only possible for workers created before
+  unique naming in 0.3.1) now list every candidate's agent id, state and
+  model, so the coordinator can re-address by id immediately.
+- `swarm_status` and `/swarm` list lines include the agent id next to each
+  worker. Found in production: a coordinator hit the ambiguous-name error
+  repeatedly on legacy duplicate names with no id in sight.

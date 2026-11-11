@@ -55,3 +55,15 @@ export function sharedWriterWarning(agents: readonly WriterPeer[], selfName: str
     'Use isolation "worktree" for parallel writers, or run them one at a time.'
   );
 }
+
+/** Error text for an ambiguous worker name. It lists every candidate with
+ * its id, state and model, so the coordinator can re-address by id in one
+ * step instead of guessing. Duplicate names exist only on workers created
+ * before unique naming; new workers are auto-suffixed at spawn. */
+export function ambiguousNameMessage(
+  name: string,
+  matches: readonly { id: string; state: string; model: string }[],
+): string {
+  const list = matches.map((match) => `${match.id} [${match.state}] ${match.model}`).join('; ');
+  return `Worker name "${name}" is ambiguous (${matches.length} workers). Address one by agent id: ${list}`;
+}

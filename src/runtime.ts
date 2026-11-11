@@ -19,7 +19,7 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { assertThinking, resolveModel, roleInstructions, ROLES, type Thinking } from './policy.ts';
 import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
-import { uniqueName } from './workflow.ts';
+import { ambiguousNameMessage, uniqueName } from './workflow.ts';
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
 import { prepareWorktree, removeWorktree, verifyWorktree, worktreeStatus, type Worktree } from './worktrees.ts';
 import { acquireLease, type Lease } from './lease.ts';
@@ -244,7 +244,8 @@ export async function openRuntime(options: RuntimeOptions) {
     const direct = fleet?.agents[idOrName];
     if (direct) return direct;
     const matches = Object.values(fleet?.agents ?? {}).filter((agent) => agent.name === idOrName);
-    if (matches.length !== 1) throw new Error(`Unknown or ambiguous swarm agent: ${idOrName}`);
+    if (matches.length > 1) throw new Error(ambiguousNameMessage(idOrName, matches));
+    if (matches.length !== 1) throw new Error(`Unknown swarm agent: ${idOrName}`);
     return matches[0]!;
   };
 
