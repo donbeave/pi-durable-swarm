@@ -67,3 +67,38 @@ export function ambiguousNameMessage(
   const list = matches.map((match) => `${match.id} [${match.state}] ${match.model}`).join('; ');
   return `Worker name "${name}" is ambiguous (${matches.length} workers). Address one by agent id: ${list}`;
 }
+
+export type ProviderFailureKind = 'transient' | 'content_filter' | 'other';
+
+/**
+ * Classify a provider failure from its error text. Transient transport and
+ * quota failures (premature close, resets, timeouts, 429, 5xx, overload)
+ * are worth one durable retry: completed tool calls are checkpointed in
+ * the transcript, so continuing does not redo them. A content_filter
+ * refusal is not retryable unchanged — the same request will be filtered
+ * again; the coordinator must re-scope the task or pick another model.
+ */
+export function classifyProviderError(detail: string): ProviderFailureKind {
+  const text = detail.toLowerCase();
+  if (text.includes('content_filter') || text.includes('content filter')) return 'content_filter';
+  if (
+    text.includes('prematurely closed') ||
+    text.includes('econnreset') ||
+    text.includes('connection') ||
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('429') ||
+    text.includes('rate limit') ||
+    text.includes('overload') ||
+    /\b5\d\d\b/.test(text)
+  ) {
+    return 'transient';
+  }
+  return 'other';
+}
+
+export const TRANSIENT_RETRY_MESSAGE =
+  'The previous provider request failed transiently before completing. Continue the original task from where you left off. Do not redo tool work that already completed.';
+
+export const CONTENT_FILTER_GUIDANCE =
+  'This is a provider content_filter refusal. Do not retry the same task unchanged. The coordinator must re-scope or split the task, or assign another eligible model.';

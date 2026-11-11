@@ -49,3 +49,12 @@ test('ambiguous name error lists candidate ids, states and models', async () => 
   assert.match(message, /fanout:a:0 \[failed\] xiaomi-token-plan-sgp\/mimo-v2\.6-pro/);
   assert.match(message, /fanout:b:0 \[running\] zai\/glm-5\.3/);
 });
+
+test('provider failures classify into transient, content_filter and other', async () => {
+  const { classifyProviderError } = await import('../src/workflow.ts');
+  assert.equal(classifyProviderError('400: Connection prematurely closed BEFORE response'), 'transient');
+  assert.equal(classifyProviderError('429 rate limit exceeded'), 'transient');
+  assert.equal(classifyProviderError('503 Service Unavailable'), 'transient');
+  assert.equal(classifyProviderError('Provider finish_reason: content_filter'), 'content_filter');
+  assert.equal(classifyProviderError('model_error'), 'other');
+});

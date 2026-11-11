@@ -19,7 +19,7 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { assertThinking, ELIGIBLE_MODELS, resolveModel, roleInstructions, ROLES, type Thinking } from './policy.ts';
 import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
-import { ambiguousNameMessage, uniqueName } from './workflow.ts';
+import { ambiguousNameMessage, classifyProviderError, CONTENT_FILTER_GUIDANCE, TRANSIENT_RETRY_MESSAGE, uniqueName } from './workflow.ts';
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
 import { prepareWorktree, removeWorktree, verifyWorktree, worktreeStatus, type Worktree } from './worktrees.ts';
 import { acquireLease, type Lease } from './lease.ts';
@@ -100,11 +100,38 @@ export async function openRuntime(options: RuntimeOptions) {
         const child = await runtime.conversation(agent.conversationId, ctx);
         if (!child) throw new Error(`Missing child conversation ${agent.conversationId}`);
 
-        const submission = await child.submit(
+        const providerDetail = async (): Promise<string> => {
+          try {
+            const view = await runtime.context(agent.conversationId, ctx);
+            for (const entry of [...view.entries].reverse()) {
+              const message = entry.model?.find(
+                (candidate) => typeof (candidate as { errorMessage?: unknown }).errorMessage === 'string',
+              ) as { errorMessage?: string } | undefined;
+              if (message?.errorMessage) return message.errorMessage.slice(0, 300);
+            }
+          } catch {
+            // Best effort only.
+          }
+          return '';
+        };
+
+        let submission = await child.submit(
           { type: 'input', content: task.input.message, whenBusy: task.input.mode, requestId: `swarm-input:${task.id}` },
           ctx,
         );
-        const settled = await submission.wait(ctx);
+        let settled = await submission.wait(ctx);
+        if (settled.status === 'unanswered' && settled.reason !== 'aborted') {
+          const kind = classifyProviderError(await providerDetail());
+          if (kind === 'transient') {
+            // One durable retry: the transcript keeps completed tool work,
+            // so the continuation does not redo it.
+            submission = await child.submit(
+              { type: 'input', content: TRANSIENT_RETRY_MESSAGE, whenBusy: 'followUp', requestId: `swarm-input:${task.id}:retry1` },
+              ctx,
+            );
+            settled = await submission.wait(ctx);
+          }
+        }
 
         let result: SwarmResult;
         if (settled.status === 'done' && settled.type === 'input') {
@@ -121,21 +148,9 @@ export async function openRuntime(options: RuntimeOptions) {
           result = { status: 'completed', text };
         } else {
           const reason = settled.status === 'unanswered' ? settled.reason : 'unexpected submission';
-          let detail = '';
-          try {
-            const view = await runtime.context(agent.conversationId, ctx);
-            for (const entry of [...view.entries].reverse()) {
-              const message = entry.model?.find(
-                (candidate) => typeof (candidate as { errorMessage?: unknown }).errorMessage === 'string',
-              ) as { errorMessage?: string } | undefined;
-              if (message?.errorMessage) {
-                detail = ` Provider detail: ${message.errorMessage.slice(0, 300)}`;
-                break;
-              }
-            }
-          } catch {
-            // Detail is best effort; the reason above always stands.
-          }
+          const rawDetail = await providerDetail();
+          let detail = rawDetail ? ` Provider detail: ${rawDetail}` : '';
+          if (classifyProviderError(rawDetail) === 'content_filter') detail += ` ${CONTENT_FILTER_GUIDANCE}`;
           result = {
             status: reason === 'aborted' ? 'stopped' : 'failed',
             text: `Agent ${agent.name} ${reason === 'aborted' ? 'stopped' : `failed: ${reason}`}.${detail}`,

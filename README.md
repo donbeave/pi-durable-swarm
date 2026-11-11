@@ -339,3 +339,22 @@ delegation failure to explain, not a footnote.
 - **Flash-first allocation doctrine** in the delegation balance section:
   Flash models carry exploration, implementation and tests in parallel;
   MiMo Pro and GLM-5.3 escalate only on a stated reason. Tests 23/23.
+
+## Changes in 0.4.1 (provider failure handling)
+
+Both production worker failures so far were on MiMo Pro, and they were
+different failures that need different handling:
+
+- `400 Connection prematurely closed BEFORE response` — a transient
+  provider transport drop. The Runner now retries once, durably: it
+  submits a continuation to the same conversation, whose transcript keeps
+  completed tool work, so the retry does not redo it.
+- `Provider finish_reason: content_filter` — a provider refusal. The
+  failure result now says so and instructs the coordinator to re-scope or
+  split the task, or assign another eligible model. Retrying the same
+  task unchanged would be filtered again, so the extension never does it.
+
+Failure classification is unit-tested (`classifyProviderError`): transient
+transport, timeout, 429, 5xx and overload shapes retry once; content
+filter never auto-retries; anything else fails with its provider detail
+for the coordinator to judge.
