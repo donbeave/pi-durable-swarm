@@ -249,7 +249,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
             },
             { additionalProperties: false },
           ),
-          { minItems: 1, maxItems: 6 },
+          { minItems: 1, maxItems: 12 },
         ),
       },
       { additionalProperties: false },
@@ -309,7 +309,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
     label: 'Join swarm workers',
     description: 'Wait for and collect several swarm workers at once by id or unique name. Returns one clipped section per worker; failed or stopped workers are reported as failures, never as success.',
     parameters: Type.Object(
-      { agent_ids: Type.Array(Type.String(), { minItems: 1, maxItems: 6 }), timeout_ms: Type.Optional(Type.Number()) },
+      { agent_ids: Type.Array(Type.String(), { minItems: 1, maxItems: 12 }), timeout_ms: Type.Optional(Type.Number()) },
       { additionalProperties: false },
     ),
     async execute(_callId, args, signal, _onUpdate, ctx) {

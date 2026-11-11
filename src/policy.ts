@@ -11,6 +11,8 @@ export type EligibleModel = {
   modelId: string;
   thinking: readonly Thinking[];
   role: string;
+  /** Review-only models may never implement, test-write or fix. */
+  reviewOnly?: boolean;
 };
 
 const MIMO = 'xiaomi-token-plan-sgp';
@@ -21,6 +23,14 @@ export const ELIGIBLE_MODELS: readonly EligibleModel[] = [
   { id: 'minimax/MiniMax-M3.1-Flash', provider: 'minimax', modelId: 'MiniMax-M3.1-Flash', thinking: ['low', 'medium', 'high', 'xhigh', 'max'], role: 'Implementation and review' },
   { id: 'zai/glm-5.3-flash', provider: 'zai', modelId: 'glm-5.3-flash', thinking: ['low', 'high', 'max'], role: 'Regression tests and verification' },
   { id: 'zai/glm-5.3', provider: 'zai', modelId: 'glm-5.3', thinking: ['low', 'high', 'max'], role: 'Difficult fixes and integration' },
+  {
+    id: 'openai-codex/gpt-6.1-sol',
+    provider: 'openai-codex',
+    modelId: 'gpt-6.1-sol',
+    thinking: ['low', 'medium', 'high', 'xhigh', 'max'],
+    role: 'Independent review (review-only, mandatory reviewer)',
+    reviewOnly: true,
+  },
 ];
 
 export type ResolvedModel = { provider: string; modelId: string; canonical: string };
@@ -64,6 +74,7 @@ export const ROLES: Record<string, { description: string; model: string; thinkin
   'w4-audit': { description: 'Independent PR / security audit', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'max', write: false },
   'w5-tests': { description: 'Regression tests', model: 'zai/glm-5.3-flash', thinking: 'high', write: true },
   'w6-fix-strong': { description: 'Difficult fix / integration', model: 'zai/glm-5.3', thinking: 'max', write: true },
+  'w7-review': { description: 'Mandatory independent reviewer (Codex GPT-6.1-SOL, review-only)', model: 'openai-codex/gpt-6.1-sol', thinking: 'high', write: false },
 };
 
 export function roleInstructions(name: string, write: boolean): string {

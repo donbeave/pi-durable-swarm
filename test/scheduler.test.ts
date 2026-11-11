@@ -9,7 +9,7 @@ const agent = (id: string, provider: string, state: SchedulableAgent['state'], q
   queuedAt,
 });
 
-test('admits up to six globally and two per provider, oldest first', () => {
+test('admits up to twelve globally and four per provider, oldest first', () => {
   const agents = [
     agent('a', 'minimax', 'queued', 3),
     agent('b', 'minimax', 'queued', 1),
@@ -20,13 +20,15 @@ test('admits up to six globally and two per provider, oldest first', () => {
     agent('g', 'xiaomi-token-plan-sgp', 'queued', 7),
     agent('h', 'zai', 'queued', 8),
   ];
-  assert.deepEqual(admit(agents), ['b', 'c', 'd', 'e', 'f', 'g']);
+  assert.deepEqual(admit(agents), ['b', 'c', 'a', 'd', 'e', 'f', 'g', 'h']);
 });
 
 test('running workers consume both slots', () => {
   const agents = [
     agent('r1', 'minimax', 'running'),
     agent('r2', 'minimax', 'running'),
+    agent('r3', 'minimax', 'running'),
+    agent('r4', 'minimax', 'running'),
     agent('q1', 'minimax', 'queued', 1),
     agent('q2', 'zai', 'queued', 2),
   ];

@@ -65,13 +65,17 @@ spend from the Durable usage ledger, by model. For example:
 | W4 | `w4-audit` | `minimax/MiniMax-M3.1-Flash` | `max` |
 | W5 | `w5-tests` | `zai/glm-5.3-flash` | `high` |
 | W6 | `w6-fix-strong` | `zai/glm-5.3` | `max` |
+| W7 | `w7-review` | `openai-codex/gpt-6.1-sol` | `high` |
 
 Model policy is structural, not procedural:
 
-- Only these five models are eligible. Fuzzy names, bare ids, other
-  providers and older generations are **rejected before any durable state is
-  created** — never substituted. (`xiaomi/<id>` is accepted as a documented
-  alias of the local Xiaomi token-plan provider.)
+- Only these six models are eligible: the five MiMo, MiniMax and Z.AI
+  worker models, plus Codex GPT-6.1-SOL as a review-only reviewer. Fuzzy
+  names, bare ids, other providers and older generations are **rejected
+  before any durable state is created** — never substituted.
+  (`xiaomi/<id>` is accepted as a documented alias of the local Xiaomi
+  token-plan provider.) GPT-6.1-SOL may run only as `w7-review`; every
+  other role rejects it, and `w7-review` rejects every other model.
 - Thinking levels are validated per model (MiMo `off|high`, MiniMax
   `low|medium|high|xhigh|max`, GLM-5.3 family `low|high|max`). Unsupported
   levels are rejected, never silently clamped.
@@ -81,7 +85,7 @@ Model policy is structural, not procedural:
 ## Concurrency
 
 Hard scheduler bounds, enforced from durable fleet state on every admission:
-**max 6 running globally, max 2 per provider**, oldest queued first. Queued
+**max 12 running globally, max 4 per provider**, oldest queued first. Queued
 workers start automatically as slots free, including after a restart.
 
 ## Worktrees
@@ -283,18 +287,55 @@ sessions:
 
 ## Delegation balance (how supervisors should allocate)
 
-Most execution belongs to the three providers, not to Muse.
-Muse supervises, decomposes, integrates and accepts. Per milestone,
-unless a provider genuinely has no fitting task (state why):
+Most execution belongs to the Flash models, not to Muse and not
+to the Pro or flagship models. Muse supervises, decomposes,
+integrates and accepts. The scheduler admits **12 workers globally and 4
+per provider**, so fan out widely instead of running workers one or two at
+a time.
 
-- Xiaomi MiMo Flash (`w1-scout`): exploration, file/symbol mapping, audits.
-- Xiaomi MiMo Pro (`w2-impl-strong`) and MiniMax M3.1 Flash (`w3-impl`):
-  the implementation bulk, in parallel in separate worktrees.
-- MiniMax M3.1 Flash at `max` (`w4-audit`): independent review of every
-  implementation result before integration.
-- Z.AI GLM-5.3 Flash (`w5-tests`): regression tests, red/green proof.
-- Z.AI GLM-5.3 at `max` (`w6-fix-strong`): the hardest fix or integration
-  investigation, not routine work.
+Priority order for every milestone:
+
+1. **Flash first, in parallel.** Default to Flash workers and run them
+   concurrently: MiMo V2.6 Flash (`w1-scout`) for exploration and mapping,
+   MiniMax M3.1 Flash (`w3-impl`) for implementation, and GLM-5.3 Flash
+   (`w5-tests`) for tests and verification. A milestone that runs one
+   worker at a time while Flash capacity sits idle is misallocated.
+2. **Pro and flagship only on demand.** MiMo V2.6 Pro (`w2-impl-strong`)
+   and GLM-5.3 at `max` (`w6-fix-strong`) are for work a Flash worker
+   failed, or for the hardest fix and integration investigation. Start
+   with Flash. Escalate with a stated reason. Do not start with Pro.
+3. **GPT-6.1-SOL reviews everything.** Every implementation result goes to
+   `w7-review` (Codex GPT-6.1-SOL, review-only) before integration, in
+   addition to any provider-side audit (`w4-audit`, MiniMax at `max`).
+   The reviewer model may never implement, test-write or fix; the
+   extension rejects it for every other role.
+
+| Worker | Role | Model | Thinking |
+|---|---|---|---|
+| W1 | `w1-scout` | `xiaomi-token-plan-sgp/mimo-v2.6-flash` | `high` |
+| W2 | `w2-impl-strong` | `xiaomi-token-plan-sgp/mimo-v2.6-pro` | `high` |
+| W3 | `w3-impl` | `minimax/MiniMax-M3.1-Flash` | `high` |
+| W4 | `w4-audit` | `minimax/MiniMax-M3.1-Flash` | `max` |
+| W5 | `w5-tests` | `zai/glm-5.3-flash` | `high` |
+| W6 | `w6-fix-strong` | `zai/glm-5.3` | `max` |
+| W7 | `w7-review` | `openai-codex/gpt-6.1-sol` | `high` |
 
 Check the balance in `swarm_status` fleet usage at each milestone report.
-A provider at zero is a delegation failure to explain, not a footnote.
+A provider at zero, or a milestone with no parallel Flash fan-out, is a
+delegation failure to explain, not a footnote.
+
+## Changes in 0.4.0 (Flash-first parallelism, GPT reviewer)
+
+- **Parallelism raised.** Scheduler bounds are now 12 workers globally
+  and 4 per provider (was 6 and 2). Fan-out and join accept up to 12
+  workers per call. Verified live: eight Flash workers (4 MiMo Flash, 4
+  GLM Flash) with 20 second sleeps collected in 50 seconds total.
+- **New mandatory reviewer role `w7-review`** on
+  `openai-codex/gpt-6.1-sol`, read-only. Every implementation result goes
+  to it before integration. The model is review-only in the policy: any
+  other role rejects it, and `w7-review` rejects every other model.
+  Verified live: the GPT reviewer found both planted fixture bugs with
+  test evidence, and an attempt to run it as an implementer was rejected.
+- **Flash-first allocation doctrine** in the delegation balance section:
+  Flash models carry exploration, implementation and tests in parallel;
+  MiMo Pro and GLM-5.3 escalate only on a stated reason. Tests 23/23.

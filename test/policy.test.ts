@@ -32,3 +32,10 @@ test('unsupported thinking levels are rejected, never clamped', () => {
   assert.throws(() => assertThinking(resolveModel('zai/glm-5.3-flash'), 'medium'), /not supported/);
   assert.throws(() => assertThinking(resolveModel('zai/glm-5.3'), 'xhigh'), /not supported/);
 });
+
+test('GPT-6.1-SOL is eligible only as the reviewer model', async () => {
+  const { ELIGIBLE_MODELS: models } = await import('../src/policy.ts');
+  const reviewer = models.find((model) => model.id === 'openai-codex/gpt-6.1-sol');
+  assert.ok(reviewer);
+  assert.equal(reviewer.reviewOnly, true);
+});

@@ -1,6 +1,6 @@
 {
   "name": "pi-durable-swarm",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Durable Pi multi-agent swarm for Muse Code: exact MiMo/MiniMax/Z.AI model pins, bounded 6-worker concurrency, retained worktrees, recovery after host restart. Built on @earendil-works/pi-durable.",
   "type": "module",
   "license": "MIT",

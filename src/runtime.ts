@@ -16,7 +16,7 @@ import {
 } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
-import { assertThinking, resolveModel, roleInstructions, ROLES, type Thinking } from './policy.ts';
+import { assertThinking, ELIGIBLE_MODELS, resolveModel, roleInstructions, ROLES, type Thinking } from './policy.ts';
 import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
 import { ambiguousNameMessage, uniqueName } from './workflow.ts';
@@ -289,6 +289,16 @@ export async function openRuntime(options: RuntimeOptions) {
     const role = ROLES[roleName];
     if (!role) throw new Error(`Unknown role "${roleName}". Roles: ${Object.keys(ROLES).join(', ')}`);
     const model = resolveModel(input.model ?? role.model);
+    const eligible = ELIGIBLE_MODELS.find((candidate) => candidate.id === model.canonical);
+    if (eligible?.reviewOnly && roleName !== 'w7-review') {
+      throw new Error(
+        `Model ${model.canonical} is review-only and may only run as role w7-review. ` +
+          'Implementation, tests and fixes stay on MiMo, MiniMax and Z.AI workers.',
+      );
+    }
+    if (roleName === 'w7-review' && !eligible?.reviewOnly) {
+      throw new Error('Role w7-review must run on the review-only reviewer model (openai-codex/gpt-6.1-sol).');
+    }
     const thinking = assertThinking(model, input.thinking ?? role.thinking) as Thinking;
     if (!options.models.getModel(model.provider, model.modelId)) {
       throw new Error(

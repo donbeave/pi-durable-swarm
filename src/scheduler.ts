@@ -5,7 +5,7 @@
 
 export type SchedulerLimits = { maxConcurrent: number; perProvider: number };
 
-export const DEFAULT_LIMITS: SchedulerLimits = { maxConcurrent: 6, perProvider: 2 };
+export const DEFAULT_LIMITS: SchedulerLimits = { maxConcurrent: 12, perProvider: 4 };
 
 export type SchedulableAgent = {
   id: string;
