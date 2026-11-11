@@ -50,3 +50,18 @@ export async function verifyWorktree(worktree: Worktree): Promise<void> {
 export async function worktreeStatus(worktree: Worktree): Promise<string> {
   return git(worktree.path, ['status', '--porcelain']);
 }
+
+/**
+ * Remove one retained worktree, borrowed from the explicit cleanup rule in
+ * anasalqoyyum/pi-durable-subagents: only a clean worktree may go, the call
+ * needs the exact recorded path (checked by the caller), and the branch is
+ * always retained. Dirty work is refused, never discarded.
+ */
+export async function removeWorktree(worktree: Worktree): Promise<string> {
+  const status = await worktreeStatus(worktree);
+  if (status) {
+    throw new Error(`Worktree ${worktree.path} has uncommitted changes and will not be removed:\n${status}`);
+  }
+  await git(worktree.repository, ['worktree', 'remove', worktree.path]);
+  return `Removed clean worktree ${worktree.path}. Branch ${worktree.branch} retained.`;
+}

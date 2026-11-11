@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { prepareWorktree, verifyWorktree, worktreeStatus } from '../src/worktrees.ts';
+import { prepareWorktree, removeWorktree, verifyWorktree, worktreeStatus } from '../src/worktrees.ts';
 
 function repo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-wt-'));
@@ -39,4 +39,16 @@ test('preparing the same agent worktree twice refuses to overwrite', async () =>
     prepareWorktree({ cwd: dir, root: join(dir, '.swarm-wt'), agentId: 'tool:dup' }),
     /already exists|already checked out|is already used/,
   );
+});
+
+test('clean worktree removal keeps the branch; dirty removal is refused', async () => {
+  const dir = repo();
+  const clean = await prepareWorktree({ cwd: dir, root: join(dir, '.swarm-wt'), agentId: 'tool:clean' });
+  const dirty = await prepareWorktree({ cwd: dir, root: join(dir, '.swarm-wt'), agentId: 'tool:dirty' });
+  writeFileSync(join(dirty.path, 'b.txt'), 'uncommitted\n');
+
+  await assert.rejects(removeWorktree(dirty), /uncommitted changes/);
+  assert.match(await removeWorktree(clean), /Branch swarm\/tool-clean retained/);
+  const branches = execFileSync('git', ['branch', '--list', 'swarm/tool-clean'], { cwd: dir, encoding: 'utf8' });
+  assert.match(branches, /swarm\/tool-clean/);
 });

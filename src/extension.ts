@@ -5,6 +5,7 @@ import { modelsFromPi } from './models.ts';
 import { ELIGIBLE_MODELS, ROLES } from './policy.ts';
 import { openRuntime, type SwarmRuntime } from './runtime.ts';
 import type { AgentRecord } from './state.ts';
+import { formatJoin, substitutePrevious } from './workflow.ts';
 
 function describe(agent: AgentRecord): string {
   const worktree = agent.worktree
@@ -149,7 +150,8 @@ export default function durableSwarm(pi: ExtensionAPI) {
       await active.reconcile();
       if (args.agent_id) {
         const agent = await active.get(args.agent_id);
-        return { content: [{ type: 'text' as const, text: describe(agent) }], details: { agent_id: agent.id, state: agent.state } };
+        const usage = await active.usage(agent.id).catch(() => 'usage unavailable');
+        return { content: [{ type: 'text' as const, text: `${describe(agent)}\nUsage: ${usage}` }], details: { agent_id: agent.id, state: agent.state } };
       }
       const fleet = await active.snapshot();
       const agents = Object.values(fleet?.agents ?? {});
@@ -214,6 +216,120 @@ export default function durableSwarm(pi: ExtensionAPI) {
       const active = await ready(ctx);
       await active.stop(args.agent_id);
       return { content: [{ type: 'text' as const, text: `Stopped ${args.agent_id}.` }], details: { agent_id: args.agent_id } };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_fanout',
+    label: 'Swarm fan-out',
+    description:
+      'Deterministic fan-out borrowed from workflow-style orchestration: spawn 1-6 workers in one call. mode parallel (default) starts them all under the hard scheduler bounds (6 running, 2 per provider). mode chain runs steps one at a time, substituting the previous result into the next task at {previous}, which suits implement-then-review pipelines. Every worker keeps an exact role model pin.',
+    parameters: Type.Object(
+      {
+        mode: Type.Optional(Type.Union([Type.Literal('parallel'), Type.Literal('chain')])),
+        tasks: Type.Array(
+          Type.Object(
+            {
+              name: Type.String(),
+              task: Type.String(),
+              role: Type.Optional(Type.String()),
+              model: Type.Optional(Type.String()),
+              thinking: Type.Optional(Type.String()),
+              isolation: Type.Optional(Type.Union([Type.Literal('none'), Type.Literal('worktree')])),
+            },
+            { additionalProperties: false },
+          ),
+          { minItems: 1, maxItems: 6 },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(callId, args, signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      const mode = args.mode ?? 'parallel';
+      if (mode === 'parallel') {
+        const agents = [];
+        for (const [index, step] of args.tasks.entries()) {
+          agents.push(
+            await active.spawn({
+              requestId: `fanout:${callId}:${index}`,
+              name: step.name,
+              task: step.task,
+              role: step.role,
+              model: step.model,
+              thinking: step.thinking,
+              cwd: ctx.cwd,
+              isolation: step.isolation ?? 'none',
+            }),
+          );
+        }
+        return {
+          content: [{ type: 'text' as const, text: agents.map((agent) => describe(agent)).join('\n\n') + '\nCollect all with swarm_join.' }],
+          details: { agent_ids: agents.map((agent) => agent.id), mode },
+        };
+      }
+      const entries = [];
+      let previous: string | undefined;
+      for (const [index, step] of args.tasks.entries()) {
+        const agent = await active.spawn({
+          requestId: `chain:${callId}:${index}`,
+          name: step.name,
+          task: substitutePrevious(step.task, previous),
+          role: step.role,
+          model: step.model,
+          thinking: step.thinking,
+          cwd: ctx.cwd,
+          isolation: step.isolation ?? 'none',
+        });
+        const result = await active.waitAgent(agent.id, signal);
+        entries.push({ name: agent.name, status: result.status, text: result.text });
+        previous = result.text;
+        if (result.status !== 'completed') break;
+      }
+      return {
+        content: [{ type: 'text' as const, text: formatJoin(entries) }],
+        details: { mode, steps: entries.length },
+        isError: entries.at(-1)?.status !== 'completed',
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_join',
+    label: 'Join swarm workers',
+    description: 'Wait for and collect several swarm workers at once by id or unique name. Returns one clipped section per worker; failed or stopped workers are reported as failures, never as success.',
+    parameters: Type.Object(
+      { agent_ids: Type.Array(Type.String(), { minItems: 1, maxItems: 6 }) },
+      { additionalProperties: false },
+    ),
+    async execute(_callId, args, signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      const entries = [];
+      for (const id of args.agent_ids) {
+        const agent = await active.get(id);
+        const result = await active.waitAgent(agent.id, signal);
+        entries.push({ name: agent.name, status: result.status, text: result.text });
+      }
+      return {
+        content: [{ type: 'text' as const, text: formatJoin(entries) }],
+        details: { count: entries.length },
+        isError: entries.some((entry) => entry.status !== 'completed'),
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_cleanup_worktree',
+    label: 'Clean up swarm worktree',
+    description: 'Remove one retained swarm worktree after explicit coordinator decision. Requires the exact recorded path, a stopped or finished worker, and a clean worktree. Dirty worktrees are refused, never discarded. The branch is retained.',
+    parameters: Type.Object(
+      { agent_id: Type.String(), path: Type.String() },
+      { additionalProperties: false },
+    ),
+    async execute(_callId, args, _signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      const text = await active.cleanupWorktree(args.agent_id, args.path);
+      return { content: [{ type: 'text' as const, text }], details: { agent_id: args.agent_id } };
     },
   });
 

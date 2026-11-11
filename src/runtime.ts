@@ -12,6 +12,7 @@ import {
   LiveDoc,
   type Conversation,
   type TaskId,
+  UsageDoc,
 } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
@@ -19,7 +20,7 @@ import { assertThinking, resolveModel, roleInstructions, ROLES, type Thinking } 
 import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
-import { prepareWorktree, verifyWorktree, worktreeStatus, type Worktree } from './worktrees.ts';
+import { prepareWorktree, removeWorktree, verifyWorktree, worktreeStatus, type Worktree } from './worktrees.ts';
 
 export const context = BACKGROUND_CONTEXT;
 
@@ -351,6 +352,47 @@ export async function openRuntime(options: RuntimeOptions) {
     await schedule();
   };
 
+  /** Per-worker spend from the harness usage ledger (pi.usage), keyed by model. */
+  const usage = async (id: string): Promise<string> => {
+    const agent = await get(id);
+    const state = await active.snapshot(UsageDoc, agent.conversationId, context);
+    if (!state) return 'no usage recorded';
+    let tokens = 0;
+    let cost = 0;
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(state.models)) {
+      const usageValue = value as { totalTokens?: number; cost?: { total?: number } };
+      tokens += usageValue.totalTokens ?? 0;
+      cost += usageValue.cost?.total ?? 0;
+      parts.push(key);
+    }
+    return `${tokens} tokens, $${cost.toFixed(4)} (${parts.join(', ') || 'no model calls'})`;
+  };
+
+  /** Poll durable state until a worker settles; survives queued admission. */
+  const waitAgent = async (id: string, signal?: AbortSignal): Promise<SwarmResult> => {
+    for (;;) {
+      signal?.throwIfAborted();
+      const agent = await get(id);
+      if (agent.result) return agent.result;
+      if (agent.state === 'failed' || agent.state === 'stopped') {
+        return agent.result ?? { status: agent.state, text: `Agent ${agent.name} ${agent.state}` };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+
+  const cleanupWorktree = async (id: string, path: string): Promise<string> => {
+    const agent = await get(id);
+    if (!agent.worktree || agent.worktree.path !== path) {
+      throw new Error('Cleanup requires the exact recorded worktree path for this agent');
+    }
+    if (agent.state === 'queued' || agent.state === 'running') {
+      throw new Error('Stop the worker before cleaning up its worktree');
+    }
+    return removeWorktree(agent.worktree);
+  };
+
   await reconcile();
   active.resume();
 
@@ -362,6 +404,9 @@ export async function openRuntime(options: RuntimeOptions) {
     send,
     stop,
     waitResult,
+    waitAgent,
+    usage,
+    cleanupWorktree,
     schedule,
     reconcile,
     async acknowledge(reportId: string): Promise<void> {

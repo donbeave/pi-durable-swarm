@@ -46,9 +46,14 @@ that harness API is experimental and changes between releases.
 | `swarm_result` | Collect a result; `wait: true` blocks until the latest task settles. Failures return as errors, never as success. |
 | `swarm_steer` | Steer a running worker at its next boundary, queue a follow-up, or continue an idle worker with its saved model/cwd. |
 | `swarm_stop` | Stop one worker (queued or running) without affecting others. Conversation and worktree are retained. |
+| `swarm_fanout` | Deterministic fan-out: 1 to 6 workers in one call. `parallel` starts them under the scheduler bounds. `chain` runs steps in order and puts the previous result into the next task at `{previous}`. Use a chain for implement-then-review work. |
+| `swarm_join` | Wait for several workers and collect one clipped section per worker. |
+| `swarm_cleanup_worktree` | Remove one retained worktree. The call needs the exact recorded path and a clean, finished worktree. Dirty worktrees are refused. The branch stays. |
 
 Background results are also delivered to the coordinator as follow-up
-messages when workers finish.
+messages when workers finish. `swarm_status` for one worker also reports its
+spend from the Durable usage ledger, by model. For example:
+`16362 tokens, $0.0013 (minimax/MiniMax-M3.1-Flash)`.
 
 ## Workers and models (exact pins only)
 
@@ -135,3 +140,31 @@ npm run typecheck
 
 MIT licensed. Built on `@earendil-works/pi-durable`; worker conversations use
 Pi's own model registry, so credentials and providers are exactly Pi's.
+
+## Borrowed ideas, and ideas left behind
+
+This extension borrows from the four implementations in the evaluation. Each
+borrowed idea keeps the model policy and durability rules above.
+
+Ideas borrowed:
+
+- **Workflow fan-out and group join** (from [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents)): `swarm_fanout` in `parallel` mode and `swarm_join` give the coordinator one deterministic call for many workers. `chain` mode covers the pipeline case: each step receives the previous result at `{previous}`.
+- **Saved sessions and mid-run steering** (from tintinweb and [anasalqoyyum/pi-durable-subagents](https://github.com/anasalqoyyum/pi-durable-subagents)): steering, follow-ups and idle-worker continuation all reuse the durable child conversation, its saved model, and its saved working directory.
+- **Explicit worktree cleanup** (from anasalqoyyum): `swarm_cleanup_worktree` needs the exact recorded path, a finished worker, and a clean worktree. Dirty work is refused, and the branch is retained.
+- **Reviewer in the loop** (from [xian0x5a/pi-durable-subagents](https://github.com/xian0x5a/pi-durable-subagents)): the Request and Answer supervision pattern becomes a `chain`: an implementer finishes, then an independent auditor (W4, `max`) reviews the report and the code before the coordinator integrates.
+- **Idempotent submissions, replay-unsafe tools, and the usage ledger** (from [@earendil-works/pi-durable](https://github.com/earendil-works/pi/tree/main/packages/durable)): durable task checkpoints drive recovery, spawns stay idempotent by request id, and `swarm_status` reads per-worker spend from `pi.usage`.
+
+Ideas left behind, with reasons:
+
+- **Tintinweb's JavaScript workflow engine and fuzzy model resolver.** The resolver can land on another provider. The engine adds a large script surface for fan-out that `swarm_fanout` and `swarm_join` already cover.
+- **Purboo-style model pools, provider failover, and a shared global daemon.** Pools substitute one provider for another on quota errors, and a shared daemon mixes projects. This extension keeps one store per project and fails a worker visibly instead.
+- **Xian's automatic moderator agent.** A moderator spends extra model calls on every stall. A named reviewer worker in a chain gives the same check at a known cost, only where the coordinator asks for it.
+- **Interactive write-authorization prompts (anasalqoyyum).** Print and RPC coordinators cannot answer prompts. Role tool lists (`read` and `bash` for scouts and auditors) set the write boundary instead.
+- **Nested delegation.** Child workers receive coding tools only, never the `swarm_*` tools. The coordinator owns all decomposition. This removes the nested-spawn limit problem by construction.
+
+## Changes in 0.2.0
+
+- Add `swarm_fanout` (`parallel` and `chain` modes) and `swarm_join`.
+- Add per-worker usage and cost to `swarm_status`.
+- Add `swarm_cleanup_worktree` with dirty-worktree refusal.
+- All three features are covered by unit tests and were verified live: a parallel fan-out with join, an implement-then-review chain that ended in `APPROVED`, and a cleanup call refused on a dirty worktree.
