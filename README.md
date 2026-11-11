@@ -93,6 +93,25 @@ The extension never auto-commits, auto-merges, auto-removes or reuses a
 worktree; the coordinator validates the reported changed files and integrates
 manually. Worker instructions forbid commits and merges.
 
+## Limits you must know
+
+- **One Pi process per project.** The store has no cross-process lease. A
+  second Pi in the same project can steal tasks and break the concurrency
+  bounds. Run one coordinator per project.
+- **Read-only roles are an instruction boundary, not a sandbox.** Scouts and
+  auditors keep a shell for inspection, and the shell could write. Their
+  system prompt forbids it. Do not rely on a read-only role for adversarial
+  isolation.
+- **Worktree isolation is a working-directory convention.** Workers share the
+  host filesystem and could navigate outside their worktree. Worktrees give
+  clean, separate branches for validation, not a security boundary.
+- **A shell command already running when Pi dies keeps running.** The harness
+  marks that tool call interrupted and the conversation continues on reopen.
+  The orphan process can still finish and change files. Check worktree status
+  after any recovery before you trust a diff.
+- **A model request interrupted by a crash is sent again.** Tool calls are
+  not duplicated, but the provider request (and its cost) can be.
+
 ## Durability semantics
 
 - State lives in `<project>/.pi/durable-swarm/swarm.sqlite` (project-local).
@@ -168,3 +187,32 @@ Ideas left behind, with reasons:
 - Add per-worker usage and cost to `swarm_status`.
 - Add `swarm_cleanup_worktree` with dirty-worktree refusal.
 - All three features are covered by unit tests and were verified live: a parallel fan-out with join, an implement-then-review chain that ended in `APPROVED`, and a cleanup call refused on a dirty worktree.
+
+## Changes in 0.2.1 (multi-agent review fixes)
+
+Reviewed by four parallel subagents (correctness, durability, model policy,
+fitness) with a final pass in the main session. Fixes:
+
+- `swarm_steer` no longer bypasses the scheduler. A message to a queued
+  worker folds into its pending task. A message to an idle worker re-enters
+  through the scheduler, so the 6 and 2-per-provider bounds hold. Starting a
+  new delivery clears the old result, so `swarm_join` cannot return a stale
+  success (verified live).
+- `swarm_join`, `swarm_result` with `wait: true`, and foreground
+  `swarm_spawn` now wait through the same durable path, which periodically
+  reconciles faulted runners instead of polling forever.
+- Spawn checks the Pi model registry before it creates any durable state. An
+  eligible model that Pi has not configured fails at spawn with a clear
+  error. No other model is substituted.
+- A failed scheduler pass no longer poisons later admissions, and a rejected
+  scheduling pass no longer blocks shutdown.
+- README now states the one-Pi-per-project rule, the orphan shell process
+  case, and that read-only roles and worktrees are conventions, not
+  sandboxes.
+
+Known gaps left for later work, in order: a reproducible runtime and
+recovery test harness in the repo (today the live verifications are
+documented runs, and the 15 unit tests cover the pure modules); a wait
+deadline or stall watchdog for `swarm_join` and chains; live worker
+observability beyond status polls; default worktree isolation for write
+roles in parallel fan-outs.

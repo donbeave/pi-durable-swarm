@@ -72,5 +72,5 @@ export function roleInstructions(name: string, write: boolean): string {
     'Complete exactly the assigned task. Report what changed, the checks you ran and their results, and any limitations.';
   return write
     ? `${base} Work only inside your assigned working directory. Never commit, merge, push or change Git state beyond editing files.`
-    : `${base} Do not edit files or change Git state. Use your tools only for inspection and report precise paths with evidence.`;
+    : `${base} Do not edit files or change Git state. Use your tools only for inspection and report precise paths with evidence. This is an instruction boundary, not a sandbox: your shell could write, so do not.`;
 }

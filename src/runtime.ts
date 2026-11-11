@@ -55,14 +55,17 @@ export async function openRuntime(options: RuntimeOptions) {
 
   const schedule = (): Promise<void> => {
     scheduling = scheduling.then(async () => {
-      if (!harness) return;
-      const root = await harness.root(context);
-      const fleet = await harness.snapshot(Fleet, root.id, context);
-      if (!fleet) return;
-      for (const id of admit(Object.values(fleet.agents), limits)) {
-        await startAgent(id).catch((error: unknown) =>
-          options.onError?.(error instanceof Error ? error : new Error(String(error))),
-        );
+      try {
+        if (!harness) return;
+        const root = await harness.root(context);
+        const fleet = await harness.snapshot(Fleet, root.id, context);
+        if (!fleet) return;
+        for (const id of admit(Object.values(fleet.agents), limits)) {
+          await startAgent(id);
+        }
+      } catch (error) {
+        // One failed admission must never poison later scheduling.
+        options.onError?.(error instanceof Error ? error : new Error(String(error)));
       }
     });
     return scheduling;
@@ -263,6 +266,12 @@ export async function openRuntime(options: RuntimeOptions) {
     if (!role) throw new Error(`Unknown role "${roleName}". Roles: ${Object.keys(ROLES).join(', ')}`);
     const model = resolveModel(input.model ?? role.model);
     const thinking = assertThinking(model, input.thinking ?? role.thinking) as Thinking;
+    if (!options.models.getModel(model.provider, model.modelId)) {
+      throw new Error(
+        `Model ${model.canonical} is eligible but not available in the Pi model registry. ` +
+          'Configure that provider in Pi first. The worker was not created and no other model was substituted.',
+      );
+    }
     const write = role.write;
     const tools = write ? WRITE_TOOLS : READ_ONLY_TOOLS;
 
@@ -310,6 +319,22 @@ export async function openRuntime(options: RuntimeOptions) {
       const doc = await tx.doc(Fleet, root.id);
       const record = doc.agents[agent.id];
       if (!record || doc.requests[input.requestId]) return;
+      doc.requests[input.requestId] = agent.id;
+      delete record.result;
+      delete record.finishedAt;
+      if (record.state === 'queued') {
+        // Not admitted yet: fold the message into the pending task so the
+        // scheduler delivers both, in order, when a slot frees.
+        record.pendingTask = `${record.pendingTask ?? ''}\n\nAdditional instruction: ${input.message}`;
+        return;
+      }
+      if (record.state === 'completed' || record.state === 'failed' || record.state === 'stopped') {
+        // Idle: re-enter through the scheduler so hard bounds still apply.
+        record.state = 'queued';
+        record.pendingTask = input.message;
+        record.queuedAt = Date.now();
+        return;
+      }
       const runner = await tx.createTask(
         Runner,
         { agentId: agent.id, message: input.message, mode: input.followUp ? 'followUp' : 'steer' } satisfies RunnerInput,
@@ -317,9 +342,8 @@ export async function openRuntime(options: RuntimeOptions) {
       );
       record.tasks.push(runner);
       record.state = 'running';
-      delete record.finishedAt;
-      doc.requests[input.requestId] = agent.id;
     }, context);
+    await schedule();
   };
 
   const waitResult = async (taskId: TaskId<SwarmResult>, signal?: AbortSignal): Promise<SwarmResult> => {
@@ -371,8 +395,13 @@ export async function openRuntime(options: RuntimeOptions) {
 
   /** Poll durable state until a worker settles; survives queued admission. */
   const waitAgent = async (id: string, signal?: AbortSignal): Promise<SwarmResult> => {
+    let polls = 0;
     for (;;) {
       signal?.throwIfAborted();
+      // Periodically reconcile runners that faulted outside their phases,
+      // so a dead runner settles here instead of polling forever.
+      if (polls % 4 === 0) await reconcile().catch(() => undefined);
+      polls += 1;
       const agent = await get(id);
       if (agent.result) return agent.result;
       if (agent.state === 'failed' || agent.state === 'stopped') {
@@ -417,7 +446,7 @@ export async function openRuntime(options: RuntimeOptions) {
       }, context);
     },
     async close(): Promise<void> {
-      await scheduling;
+      await scheduling.catch(() => undefined);
       await active.close(context);
       harness = undefined;
     },

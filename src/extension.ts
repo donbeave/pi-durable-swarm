@@ -123,14 +123,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
           details: { agent_id: agent.id, model: agent.model, state: agent.state },
         };
       }
-      const latest = agent.tasks.at(-1);
-      if (!latest) {
-        return {
-          content: [{ type: 'text' as const, text: `${describe(agent)}\nQueued; no scheduler slot is free yet. Collect with swarm_result.` }],
-          details: { agent_id: agent.id, model: agent.model, state: agent.state },
-        };
-      }
-      const result = await active.waitResult(latest, signal);
+      const result = await active.waitAgent(agent.id, signal);
       const finished = await active.get(agent.id);
       return {
         content: [{ type: 'text' as const, text: `${describe(finished)}\n\n${result.text}` }],
@@ -173,9 +166,8 @@ export default function durableSwarm(pi: ExtensionAPI) {
     async execute(_callId, args, signal, _onUpdate, ctx) {
       const active = await ready(ctx);
       let agent = await active.get(args.agent_id);
-      const latest = agent.tasks.at(-1);
-      if (args.wait && latest) {
-        await active.waitResult(latest, signal);
+      if (args.wait) {
+        await active.waitAgent(agent.id, signal);
         agent = await active.get(args.agent_id);
       }
       if (!agent.result) {
