@@ -21,7 +21,7 @@ import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
 import { ambiguousNameMessage, classifyProviderError, CONTENT_FILTER_GUIDANCE, TRANSIENT_RETRY_MESSAGE, uniqueName } from './workflow.ts';
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
-import { prepareWorktree, removeWorktree, verifyWorktree, worktreeHead, worktreeStatus, type Worktree } from './worktrees.ts';
+import { prepareWorktree, removeWorktree, verifyWorktree, worktreeHead, worktreeStatus, worktreeStockpile, type Worktree } from './worktrees.ts';
 import { acquireLease, type Lease } from './lease.ts';
 
 export const context = BACKGROUND_CONTEXT;
@@ -39,12 +39,15 @@ export type ProviderTokens = { input: number; output: number; cacheRead: number;
 export type SupervisorAgent = {
   id: string; name: string; state: AgentRecord['state']; model: string; provider: string;
   ageSec?: number; worktreePath?: string; branch?: string; baseCommit?: string; changedFiles?: string; resultCommit?: string;
+  dirtyFiles?: number; unpushedCommits?: number;
 };
 export type SupervisorSummary = {
   generatedAt: number;
   concurrency: { running: number; queued: number; byProvider: Record<string, ProviderConcurrency> };
   agents: SupervisorAgent[];
   tokensByProvider: Record<string, ProviderTokens>;
+  stockpileDirty: number;
+  stockpileUnpushed: number;
 };
 
 export type SpawnInput = {
@@ -504,6 +507,16 @@ export async function openRuntime(options: RuntimeOptions) {
         tokensByProvider[provider] = e;
       }
     }
+    const stockpiles = await Promise.all(
+      agents.map((a) => (a.worktree ? worktreeStockpile(a.worktree.path).catch(() => ({ dirtyFiles: -1, unpushedCommits: -1 })) : undefined)),
+    );
+    let stockpileDirty = 0;
+    let stockpileUnpushed = 0;
+    for (const s of stockpiles) {
+      if (!s) continue;
+      if (s.dirtyFiles >= 0) stockpileDirty += s.dirtyFiles;
+      if (s.unpushedCommits >= 0) stockpileUnpushed += s.unpushedCommits;
+    }
     return {
       generatedAt: now,
       concurrency: {
@@ -511,14 +524,17 @@ export async function openRuntime(options: RuntimeOptions) {
         queued: agents.filter((a) => a.state === 'queued').length,
         byProvider,
       },
-      agents: agents.map((a) => ({
+      agents: agents.map((a, i) => ({
         id: a.id, name: a.name, state: a.state, model: a.model, provider: a.provider,
         ...(a.state === 'running' && a.startedAt ? { ageSec: Math.max(0, Math.round((now - a.startedAt) / 1000)) } : {}),
         ...(a.worktree ? { worktreePath: a.worktree.path, branch: a.worktree.branch, baseCommit: a.worktree.baseCommit } : {}),
         ...(a.changedFiles !== undefined ? { changedFiles: a.changedFiles } : {}),
         ...(a.resultCommit ? { resultCommit: a.resultCommit } : {}),
+        ...(stockpiles[i] ? { dirtyFiles: stockpiles[i]!.dirtyFiles, unpushedCommits: stockpiles[i]!.unpushedCommits } : {}),
       })),
       tokensByProvider,
+      stockpileDirty,
+      stockpileUnpushed,
     };
   };
 

@@ -5,7 +5,8 @@ import { modelsFromPi } from './models.ts';
 import { ELIGIBLE_MODELS, ROLES } from './policy.ts';
 import { openRuntime, type SwarmRuntime } from './runtime.ts';
 import type { AgentRecord } from './state.ts';
-import { formatJoin, sharedWriterWarning, substitutePrevious, type WriterPeer } from './workflow.ts';
+import { clampJoinTimeout, formatJoin, sharedWriterWarning, substitutePrevious, type WriterPeer } from './workflow.ts';
+import { ackSupervisorDirective, prependSupervisorDirectives } from './supervisor-inbox.ts';
 
 async function writerWarning(active: SwarmRuntime, self: AgentRecord): Promise<string> {
   const fleet = await active.snapshot();
@@ -69,6 +70,8 @@ export default function durableSwarm(pi: ExtensionAPI) {
     if (!runtime) throw new Error('pi-durable-swarm runtime is unavailable');
     return runtime;
   };
+
+  const withInbox = async (ctx: ExtensionContext, text: string): Promise<string> => prependSupervisorDirectives(ctx.cwd, text);
 
   pi.on('session_start', async (_event, ctx) => {
     await initialize(ctx);
@@ -136,14 +139,14 @@ export default function durableSwarm(pi: ExtensionAPI) {
       if (args.run_in_background ?? true) {
         const warning = await writerWarning(active, agent);
         return {
-          content: [{ type: 'text' as const, text: `${describe(agent)}\nSpawned durably. Collect with swarm_result; it will also be delivered when it finishes.${warning ? `\n${warning}` : ''}` }],
+          content: [{ type: 'text' as const, text: await withInbox(ctx, `${describe(agent)}\nSpawned durably. Collect with swarm_result; it will also be delivered when it finishes.${warning ? `\n${warning}` : ''}`) }],
           details: { agent_id: agent.id, model: agent.model, state: agent.state },
         };
       }
       const result = await active.waitAgent(agent.id, signal);
       const finished = await active.get(agent.id);
       return {
-        content: [{ type: 'text' as const, text: `${describe(finished)}\n\n${result.text}` }],
+        content: [{ type: 'text' as const, text: await withInbox(ctx, `${describe(finished)}\n\n${result.text}`) }],
         details: { agent_id: agent.id, model: agent.model, status: result.status },
         isError: result.status !== 'completed',
       };
@@ -161,7 +164,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
       if (args.agent_id) {
         const agent = await active.get(args.agent_id);
         const usage = await active.usage(agent.id).catch(() => 'usage unavailable');
-        return { content: [{ type: 'text' as const, text: `${describe(agent)}\nUsage: ${usage}` }], details: { agent_id: agent.id, state: agent.state } };
+        return { content: [{ type: 'text' as const, text: await withInbox(ctx, `${describe(agent)}\nUsage: ${usage}`) }], details: { agent_id: agent.id, state: agent.state } };
       }
       const fleet = await active.snapshot();
       const agents = Object.values(fleet?.agents ?? {});
@@ -173,12 +176,12 @@ export default function durableSwarm(pi: ExtensionAPI) {
         const tok = Object.entries(sup.tokensByProvider).map(([p, t]) => `${p} in=${t.input} out=${t.output} cr=${t.cacheRead} cw=${t.cacheWrite} tot=${t.totalTokens} $${t.cost.toFixed(4)}`).join(' | ') || 'none';
         const running = sup.agents.filter((a) => a.state === 'running').slice(0, 13)
           .map((a) => `${a.name} ${a.ageSec ?? 0}s ${a.branch ?? '-'} ${a.worktreePath ?? ''}${(a.ageSec ?? 0) > 900 ? ' STALE' : ''}`);
-        supText = `\nSupervisor: running=${sup.concurrency.running} queued=${sup.concurrency.queued} ${prov}\nTokens: ${tok}${running.length ? `\n${running.join('\n')}` : ''}`;
+        supText = `\nSupervisor: running=${sup.concurrency.running} queued=${sup.concurrency.queued} Stockpile: dirty=${sup.stockpileDirty} unpushed=${sup.stockpileUnpushed} ${prov}\nTokens: ${tok}${running.length ? `\n${running.join('\n')}` : ''}`;
       }
       const text = agents.length
         ? `${agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`).join('\n')}\n${summary}${supText}`
         : 'No swarm workers yet.';
-      return { content: [{ type: 'text' as const, text }], details: { count: agents.length } };
+      return { content: [{ type: 'text' as const, text: await withInbox(ctx, text) }], details: { count: agents.length } };
     },
   });
 
@@ -199,12 +202,12 @@ export default function durableSwarm(pi: ExtensionAPI) {
       }
       if (!agent.result) {
         return {
-          content: [{ type: 'text' as const, text: `${describe(agent)}\nNo result yet.` }],
+          content: [{ type: 'text' as const, text: await withInbox(ctx, `${describe(agent)}\nNo result yet.`) }],
           details: { agent_id: agent.id, state: agent.state },
         };
       }
       return {
-        content: [{ type: 'text' as const, text: `${describe(agent)}\n\n${agent.result.text}` }],
+        content: [{ type: 'text' as const, text: await withInbox(ctx, `${describe(agent)}\n\n${agent.result.text}`) }],
         details: { agent_id: agent.id, status: agent.result.status },
         isError: agent.result.status !== 'completed',
       };
@@ -222,7 +225,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
     async execute(callId, args, _signal, _onUpdate, ctx) {
       const active = await ready(ctx);
       await active.send({ id: args.agent_id, requestId: `steer:${callId}`, message: args.message, followUp: args.follow_up ?? false });
-      return { content: [{ type: 'text' as const, text: `Sent to ${args.agent_id}.` }], details: { agent_id: args.agent_id } };
+      return { content: [{ type: 'text' as const, text: await withInbox(ctx, `Sent to ${args.agent_id}.`) }], details: { agent_id: args.agent_id } };
     },
   });
 
@@ -234,7 +237,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
     async execute(_callId, args, _signal, _onUpdate, ctx) {
       const active = await ready(ctx);
       await active.stop(args.agent_id);
-      return { content: [{ type: 'text' as const, text: `Stopped ${args.agent_id}.` }], details: { agent_id: args.agent_id } };
+      return { content: [{ type: 'text' as const, text: await withInbox(ctx, `Stopped ${args.agent_id}.`) }], details: { agent_id: args.agent_id } };
     },
   });
 
@@ -283,7 +286,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
           );
         }
         return {
-          content: [{ type: 'text' as const, text: agents.map((agent) => describe(agent)).join('\n\n') + '\nCollect all with swarm_join.' }],
+          content: [{ type: 'text' as const, text: await withInbox(ctx, agents.map((agent) => describe(agent)).join('\n\n') + '\nCollect all with swarm_join.') }],
           details: { agent_ids: agents.map((agent) => agent.id), mode },
         };
       }
@@ -306,7 +309,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
         if (result.status !== 'completed') break;
       }
       return {
-        content: [{ type: 'text' as const, text: formatJoin(entries) }],
+        content: [{ type: 'text' as const, text: await withInbox(ctx, formatJoin(entries)) }],
         details: { mode, steps: entries.length },
         isError: entries.at(-1)?.status !== 'completed',
       };
@@ -316,7 +319,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
   pi.registerTool({
     name: 'swarm_join',
     label: 'Join swarm workers',
-    description: 'Wait for and collect several swarm workers at once by id or unique name. Returns one clipped section per worker; failed or stopped workers are reported as failures, never as success.',
+    description: 'Wait for and collect several swarm workers at once by id or unique name. Returns one clipped section per worker; failed or stopped workers are reported as failures, never as success. timeout_ms is clamped to at most 240000 (4 minutes); a missing or larger timeout_ms uses 240000.',
     parameters: Type.Object(
       { agent_ids: Type.Array(Type.String(), { minItems: 1, maxItems: 12 }), timeout_ms: Type.Optional(Type.Number()) },
       { additionalProperties: false },
@@ -326,11 +329,11 @@ export default function durableSwarm(pi: ExtensionAPI) {
       const entries = [];
       for (const id of args.agent_ids) {
         const agent = await active.get(id);
-        const result = await active.waitAgent(agent.id, signal, args.timeout_ms);
+        const result = await active.waitAgent(agent.id, signal, clampJoinTimeout(args.timeout_ms));
         entries.push({ name: agent.name, status: result.status, text: result.text });
       }
       return {
-        content: [{ type: 'text' as const, text: formatJoin(entries) }],
+        content: [{ type: 'text' as const, text: await withInbox(ctx, formatJoin(entries)) }],
         details: { count: entries.length },
         isError: entries.some((entry) => entry.status !== 'completed'),
       };
@@ -348,7 +351,18 @@ export default function durableSwarm(pi: ExtensionAPI) {
     async execute(_callId, args, _signal, _onUpdate, ctx) {
       const active = await ready(ctx);
       const text = await active.cleanupWorktree(args.agent_id, args.path);
-      return { content: [{ type: 'text' as const, text }], details: { agent_id: args.agent_id } };
+      return { content: [{ type: 'text' as const, text: await withInbox(ctx, text) }], details: { agent_id: args.agent_id } };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_supervisor_ack',
+    label: 'Ack supervisor directive',
+    description: 'Acknowledge one supervisor directive: moves supervisor-inbox/<file> to supervisor-inbox/acked/<file>. Pass a plain *.md file name.',
+    parameters: Type.Object({ file: Type.String() }, { additionalProperties: false }),
+    async execute(_callId, args, _signal, _onUpdate, ctx) {
+      await ackSupervisorDirective(ctx.cwd, args.file);
+      return { content: [{ type: 'text' as const, text: `Acked supervisor directive ${args.file}.` }], details: { file: args.file } };
     },
   });
 

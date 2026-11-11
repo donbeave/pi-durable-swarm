@@ -10,6 +10,13 @@ export function substitutePrevious(task: string, previous: string | undefined): 
   return task.split('{previous}').join(previous);
 }
 
+export const MAX_JOIN_TIMEOUT_MS = 240_000;
+
+export function clampJoinTimeout(timeoutMs?: number): number {
+  if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs > MAX_JOIN_TIMEOUT_MS) return MAX_JOIN_TIMEOUT_MS;
+  return timeoutMs;
+}
+
 export type JoinEntry = { name: string; status: string; text: string };
 
 /** One line per worker, result clipped so a join stays readable in one turn. */

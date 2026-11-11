@@ -55,6 +55,20 @@ messages when workers finish. `swarm_status` for one worker also reports its
 spend from the Durable usage ledger, by model. For example:
 `16362 tokens, $0.0013 (minimax/MiniMax-M3.1-Flash)`.
 
+## Supervisor inbox + join cap
+
+Supervisors write directives as Markdown files in
+`<workspace>/.pi/durable-swarm/supervisor-inbox/*.md` (create the file;
+the directory is created lazily by the extension). On every `swarm_*`
+tool result, unacked files are prepended as
+`SUPERVISOR DIRECTIVES (unacked):` with each file's first 40 lines, so
+the coordinator sees them at its next Pi tool call regardless of outer
+chat delivery. Acknowledge with `swarm_supervisor_ack {file}`, which
+moves the file to `supervisor-inbox/acked/<file>`; acked files are
+ignored. `swarm_join` clamps `timeout_ms` to at most 240000 ms (a
+missing or larger value uses 240000). `swarm_status` supervisor summary
+adds `Stockpile: dirty=X unpushed=Y` from worktree agents.
+
 ## Workers and models (exact pins only)
 
 | Worker | Role | Model | Thinking |

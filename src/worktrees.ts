@@ -46,6 +46,28 @@ export async function verifyWorktree(worktree: Worktree): Promise<void> {
   if (!top) throw new Error(`Worktree is missing or not a git checkout: ${worktree.path}. Refusing fallback to the parent cwd.`);
 }
 
+export type WorktreeStockpile = { dirtyFiles: number; unpushedCommits: number };
+
+function countLines(text: string): number {
+  return text ? text.split('\n').filter((l) => l.length > 0).length : 0;
+}
+
+export async function worktreeStockpile(path: string): Promise<WorktreeStockpile> {
+  let dirtyFiles = -1;
+  let unpushedCommits = -1;
+  try {
+    dirtyFiles = countLines(await git(path, ['status', '--porcelain']));
+  } catch { dirtyFiles = -1; }
+  try {
+    unpushedCommits = countLines(await git(path, ['log', '@{u}..HEAD', '--oneline']));
+  } catch {
+    try {
+      unpushedCommits = countLines(await git(path, ['log', 'origin/HEAD..HEAD', '--oneline']));
+    } catch { unpushedCommits = -1; }
+  }
+  return { dirtyFiles, unpushedCommits };
+}
+
 export async function worktreeHead(worktree: Worktree): Promise<string> {
   return git(worktree.path, ['rev-parse', 'HEAD']);
 }
