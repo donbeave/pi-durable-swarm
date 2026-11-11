@@ -243,3 +243,22 @@ separate stores, separate coordinators, and separate RPC sockets. Name each
 socket after its project (for example `/tmp/<project>-swarm.sock`), never a
 shared generic name. Two swarms on one machine still share the same provider
 accounts, so their per-provider worker counts add up at the provider.
+
+## Changes in 0.3.1 (live-supervision fixes)
+
+Found by observing two production swarms run by parallel Muse
+sessions:
+
+- **Worker names are unique.** Reusing a name (two workers both called
+  `w2-impl-strong` happened in production) now auto-suffixes: `w2-impl-strong`,
+  `w2-impl-strong-2`, and so on. Name addressing in `swarm_result`,
+  `swarm_steer` and `swarm_stop` is never ambiguous. Workers created before
+  this change keep their duplicate names; address those by agent id.
+- **Shared-cwd writer warning.** Spawning a writing worker with no worktree
+  isolation while another unisolated writer is active in the same cwd now
+  returns an explicit warning naming the peers. Sequential work in one
+  checkout is fine; parallel unisolated writes are the mistake this names.
+- **Failure results carry provider detail.** A worker that fails with
+  `model_error` now appends the provider's error text (clipped) when the
+  transcript has it, so the coordinator can choose between an explicit retry
+  and an explicit reassignment to another eligible model without guessing.

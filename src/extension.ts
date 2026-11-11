@@ -5,7 +5,19 @@ import { modelsFromPi } from './models.ts';
 import { ELIGIBLE_MODELS, ROLES } from './policy.ts';
 import { openRuntime, type SwarmRuntime } from './runtime.ts';
 import type { AgentRecord } from './state.ts';
-import { formatJoin, substitutePrevious } from './workflow.ts';
+import { formatJoin, sharedWriterWarning, substitutePrevious, type WriterPeer } from './workflow.ts';
+
+async function writerWarning(active: SwarmRuntime, self: AgentRecord): Promise<string> {
+  const fleet = await active.snapshot();
+  const peers: WriterPeer[] = Object.values(fleet?.agents ?? {}).map((agent) => ({
+    name: agent.name,
+    state: agent.state,
+    write: agent.write,
+    cwd: agent.cwd,
+    hasWorktree: Boolean(agent.worktree),
+  }));
+  return sharedWriterWarning(peers, self.name) ?? '';
+}
 
 function describe(agent: AgentRecord): string {
   const age =
@@ -122,8 +134,9 @@ export default function durableSwarm(pi: ExtensionAPI) {
         isolation: args.isolation ?? 'none',
       });
       if (args.run_in_background ?? true) {
+        const warning = await writerWarning(active, agent);
         return {
-          content: [{ type: 'text' as const, text: `${describe(agent)}\nSpawned durably. Collect with swarm_result; it will also be delivered when it finishes.` }],
+          content: [{ type: 'text' as const, text: `${describe(agent)}\nSpawned durably. Collect with swarm_result; it will also be delivered when it finishes.${warning ? `\n${warning}` : ''}` }],
           details: { agent_id: agent.id, model: agent.model, state: agent.state },
         };
       }

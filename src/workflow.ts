@@ -21,3 +21,37 @@ export function formatJoin(entries: readonly JoinEntry[], clip = 1200): string {
     })
     .join('\n\n');
 }
+
+/** First free worker name: base, then base-2, base-3. Names stay unique so
+ * swarm_result and swarm_steer can always address a worker by name. */
+export function uniqueName(existing: ReadonlySet<string>, base: string): string {
+  if (!existing.has(base)) return base;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${base}-${n}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+}
+
+export type WriterPeer = { name: string; state: string; write: boolean; cwd: string; hasWorktree: boolean };
+
+/** Warning when a writing worker shares its cwd with other active writers
+ * and none of them is worktree-isolated. Parallel writes in one checkout are
+ * the foreseeable coordinator mistake; the extension names it at spawn. */
+export function sharedWriterWarning(agents: readonly WriterPeer[], selfName: string): string | undefined {
+  const self = agents.find((agent) => agent.name === selfName);
+  if (!self || !self.write || self.hasWorktree) return undefined;
+  const peers = agents.filter(
+    (agent) =>
+      agent.name !== selfName &&
+      agent.write &&
+      !agent.hasWorktree &&
+      agent.cwd === self.cwd &&
+      (agent.state === 'running' || agent.state === 'queued'),
+  );
+  if (!peers.length) return undefined;
+  return (
+    `WARNING: ${selfName} shares cwd ${self.cwd} with active writer(s) ${peers.map((peer) => peer.name).join(', ')} ` +
+    'and none is worktree-isolated. Parallel writes in one checkout can collide. ' +
+    'Use isolation "worktree" for parallel writers, or run them one at a time.'
+  );
+}

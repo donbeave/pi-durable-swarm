@@ -21,3 +21,20 @@ test('join formats one section per worker and clips long results', () => {
   assert.match(text, /== a \[completed\] ==\ndone/);
   assert.match(text, /== b \[failed\] ==\nx{10}\n\[clipped; collect with swarm_result\]/);
 });
+
+test('worker names are made unique with numeric suffixes', async () => {
+  const { uniqueName } = await import('../src/workflow.ts');
+  assert.equal(uniqueName(new Set(), 'w2-impl'), 'w2-impl');
+  assert.equal(uniqueName(new Set(['w2-impl']), 'w2-impl'), 'w2-impl-2');
+  assert.equal(uniqueName(new Set(['w2-impl', 'w2-impl-2']), 'w2-impl'), 'w2-impl-3');
+});
+
+test('shared writer warning fires only for unisolated parallel writers in one cwd', async () => {
+  const { sharedWriterWarning } = await import('../src/workflow.ts');
+  const writer = (name: string, extra: object = {}) => ({ name, state: 'running', write: true, cwd: '/repo', hasWorktree: false, ...extra });
+  assert.match(sharedWriterWarning([writer('a'), writer('b')], 'a') ?? '', /WARNING: a shares cwd/);
+  assert.equal(sharedWriterWarning([writer('a')], 'a'), undefined);
+  assert.equal(sharedWriterWarning([writer('a', { hasWorktree: true }), writer('b')], 'a'), undefined);
+  assert.equal(sharedWriterWarning([writer('a'), writer('b', { write: false })], 'a'), undefined);
+  assert.equal(sharedWriterWarning([writer('a'), writer('b', { cwd: '/other' })], 'a'), undefined);
+});
