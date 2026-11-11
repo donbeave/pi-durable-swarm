@@ -1,0 +1,237 @@
+import { join } from 'node:path';
+import { Type } from 'typebox';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { modelsFromPi } from './models.ts';
+import { ELIGIBLE_MODELS, ROLES } from './policy.ts';
+import { openRuntime, type SwarmRuntime } from './runtime.ts';
+import type { AgentRecord } from './state.ts';
+
+function describe(agent: AgentRecord): string {
+  const worktree = agent.worktree
+    ? `\nWorktree retained: ${agent.worktree.path}\nBranch: ${agent.worktree.branch}\nBase: ${agent.worktree.baseCommit}\nChanged files:\n${agent.changedFiles || 'none'}`
+    : '';
+  return `Agent ${agent.name} (${agent.id})\nRole: ${agent.role}\nModel: ${agent.model}\nThinking: ${agent.thinking}\nState: ${agent.state}${worktree}`;
+}
+
+/**
+ * pi-durable-swarm: durable multi-agent orchestration for Muse Code.
+ * One Pi coordinator owns up to six workers (two per eligible provider) whose
+ * conversations, tasks and results are committed to SQLite by
+ * @earendil-works/pi-durable before anything is shown. Killing or restarting
+ * Pi loses nothing: reopening the same project resumes queued and running
+ * workers from their last durable checkpoint.
+ */
+export default function durableSwarm(pi: ExtensionAPI) {
+  let runtime: SwarmRuntime | undefined;
+  let initializing: Promise<void> | undefined;
+
+  const initialize = async (ctx: ExtensionContext): Promise<void> => {
+    if (runtime) return;
+    if (initializing) return initializing;
+    initializing = (async () => {
+      runtime = await openRuntime({
+        // Project-local store: a swarm belongs to the project it works on,
+        // survives Pi restarts, and is never shared with other projects.
+        directory: join(ctx.cwd, '.pi', 'durable-swarm'),
+        models: modelsFromPi(ctx.modelRegistry),
+        onError: (error) => {
+          if (ctx.hasUI) ctx.ui.notify(`pi-durable-swarm: ${error.message}`, 'error');
+        },
+      });
+      void runtime.reconcile().catch(() => undefined);
+    })();
+    try {
+      await initializing;
+    } finally {
+      initializing = undefined;
+    }
+  };
+
+  const ready = async (ctx: ExtensionContext): Promise<SwarmRuntime> => {
+    await initialize(ctx);
+    if (!runtime) throw new Error('pi-durable-swarm runtime is unavailable');
+    return runtime;
+  };
+
+  pi.on('session_start', async (_event, ctx) => {
+    await initialize(ctx);
+  });
+  pi.on('session_shutdown', async () => {
+    await runtime?.close();
+    runtime = undefined;
+  });
+
+  // Deliver background results to the coordinator at its next turn boundary.
+  pi.on('agent_end', async (_event, ctx) => {
+    if (!runtime) return;
+    const fleet = await runtime.snapshot();
+    for (const report of Object.values(fleet?.outbox ?? {})) {
+      if (report.state !== 'pending') continue;
+      const agent = fleet?.agents[report.agentId];
+      pi.sendMessage(
+        {
+          customType: 'pi-durable-swarm-result',
+          content:
+            `[swarm ${agent?.name ?? report.agentId} ${report.result.status}; model ${agent?.model ?? 'unknown'}]\n` +
+            `${report.result.text.slice(0, 4000)}` +
+            (agent?.worktree ? `\nWorktree retained: ${agent.worktree.path}\nChanged files:\n${report.changedFiles || 'none'}` : ''),
+          display: true,
+          details: { reportId: report.id, agentId: report.agentId, status: report.result.status },
+        },
+        { triggerTurn: false, deliverAs: 'followUp' },
+      );
+      void runtime.acknowledge(report.id).catch(() => undefined);
+    }
+  });
+
+  pi.registerTool({
+    name: 'swarm_spawn',
+    label: 'Spawn swarm worker',
+    description:
+      'Spawn one durable swarm worker with an exact eligible model pin. Background by default: the worker is committed to durable storage before this call returns, is admitted by a hard scheduler (max 6 running, max 2 per provider), and survives Pi restarts. Roles: ' +
+      Object.entries(ROLES).map(([name, role]) => `${name} (${role.model}, thinking ${role.thinking})`).join(', ') +
+      '. Eligible model overrides: ' + ELIGIBLE_MODELS.map((model) => model.id).join(', ') +
+      '. Any other model or unsupported thinking level is rejected, never substituted or clamped.',
+    parameters: Type.Object(
+      {
+        name: Type.String(),
+        task: Type.String(),
+        role: Type.Optional(Type.String()),
+        model: Type.Optional(Type.String()),
+        thinking: Type.Optional(Type.String()),
+        isolation: Type.Optional(Type.Union([Type.Literal('none'), Type.Literal('worktree')])),
+        run_in_background: Type.Optional(Type.Boolean()),
+      },
+      { additionalProperties: false },
+    ),
+    async execute(callId, args, signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      const agent = await active.spawn({
+        requestId: `tool:${callId}`,
+        name: args.name,
+        task: args.task,
+        role: args.role,
+        model: args.model,
+        thinking: args.thinking,
+        cwd: ctx.cwd,
+        isolation: args.isolation ?? 'none',
+      });
+      if (args.run_in_background ?? true) {
+        return {
+          content: [{ type: 'text' as const, text: `${describe(agent)}\nSpawned durably. Collect with swarm_result; it will also be delivered when it finishes.` }],
+          details: { agent_id: agent.id, model: agent.model, state: agent.state },
+        };
+      }
+      const latest = agent.tasks.at(-1);
+      if (!latest) {
+        return {
+          content: [{ type: 'text' as const, text: `${describe(agent)}\nQueued; no scheduler slot is free yet. Collect with swarm_result.` }],
+          details: { agent_id: agent.id, model: agent.model, state: agent.state },
+        };
+      }
+      const result = await active.waitResult(latest, signal);
+      const finished = await active.get(agent.id);
+      return {
+        content: [{ type: 'text' as const, text: `${describe(finished)}\n\n${result.text}` }],
+        details: { agent_id: agent.id, model: agent.model, status: result.status },
+        isError: result.status !== 'completed',
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_status',
+    label: 'Swarm status',
+    description: 'List swarm workers with their durable state, exact model and thinking. Optionally pass one agent id or unique name.',
+    parameters: Type.Object({ agent_id: Type.Optional(Type.String()) }, { additionalProperties: false }),
+    async execute(_callId, args, _signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      await active.reconcile();
+      if (args.agent_id) {
+        const agent = await active.get(args.agent_id);
+        return { content: [{ type: 'text' as const, text: describe(agent) }], details: { agent_id: agent.id, state: agent.state } };
+      }
+      const fleet = await active.snapshot();
+      const agents = Object.values(fleet?.agents ?? {});
+      const text = agents.length
+        ? agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking}`).join('\n')
+        : 'No swarm workers yet.';
+      return { content: [{ type: 'text' as const, text }], details: { count: agents.length } };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_result',
+    label: 'Swarm worker result',
+    description: 'Collect a swarm worker result by id or unique name. wait=true blocks until its latest task settles. Failed or stopped work is returned as an error, never as success.',
+    parameters: Type.Object(
+      { agent_id: Type.String(), wait: Type.Optional(Type.Boolean()) },
+      { additionalProperties: false },
+    ),
+    async execute(_callId, args, signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      let agent = await active.get(args.agent_id);
+      const latest = agent.tasks.at(-1);
+      if (args.wait && latest) {
+        await active.waitResult(latest, signal);
+        agent = await active.get(args.agent_id);
+      }
+      if (!agent.result) {
+        return {
+          content: [{ type: 'text' as const, text: `${describe(agent)}\nNo result yet.` }],
+          details: { agent_id: agent.id, state: agent.state },
+        };
+      }
+      return {
+        content: [{ type: 'text' as const, text: `${describe(agent)}\n\n${agent.result.text}` }],
+        details: { agent_id: agent.id, status: agent.result.status },
+        isError: agent.result.status !== 'completed',
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_steer',
+    label: 'Steer swarm worker',
+    description: 'Send a message to a swarm worker: steers its current run at the next boundary by default, or queues behind it with follow_up=true. Continues idle workers with their saved model and cwd.',
+    parameters: Type.Object(
+      { agent_id: Type.String(), message: Type.String(), follow_up: Type.Optional(Type.Boolean()) },
+      { additionalProperties: false },
+    ),
+    async execute(callId, args, _signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      await active.send({ id: args.agent_id, requestId: `steer:${callId}`, message: args.message, followUp: args.follow_up ?? false });
+      return { content: [{ type: 'text' as const, text: `Sent to ${args.agent_id}.` }], details: { agent_id: args.agent_id } };
+    },
+  });
+
+  pi.registerTool({
+    name: 'swarm_stop',
+    label: 'Stop swarm worker',
+    description: 'Stop one swarm worker (queued or running) without affecting others. Its durable conversation and retained worktree stay available for inspection and continuation.',
+    parameters: Type.Object({ agent_id: Type.String() }, { additionalProperties: false }),
+    async execute(_callId, args, _signal, _onUpdate, ctx) {
+      const active = await ready(ctx);
+      await active.stop(args.agent_id);
+      return { content: [{ type: 'text' as const, text: `Stopped ${args.agent_id}.` }], details: { agent_id: args.agent_id } };
+    },
+  });
+
+  pi.registerCommand('swarm', {
+    description: 'pi-durable-swarm workers. /swarm lists workers; /swarm <id> shows one worker.',
+    async handler(args, ctx) {
+      const active = await ready(ctx);
+      await active.reconcile();
+      const target = args.trim();
+      if (target) {
+        ctx.ui.notify(describe(await active.get(target)), 'info');
+        return;
+      }
+      const fleet = await active.snapshot();
+      const lines = Object.values(fleet?.agents ?? {}).map(
+        (agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking}`,
+      );
+      ctx.ui.notify(lines.length ? lines.join('\n') : 'No swarm workers yet.', 'info');
+    },
+  });
+}
