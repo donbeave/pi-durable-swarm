@@ -27,6 +27,8 @@ export type AgentRecord = {
   result?: SwarmResult;
   worktree?: Worktree;
   changedFiles?: string;
+  /** HEAD of the retained worktree when the latest task settled. */
+  resultCommit?: string;
 };
 
 export type SwarmReport = {

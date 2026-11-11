@@ -166,8 +166,17 @@ export default function durableSwarm(pi: ExtensionAPI) {
       const fleet = await active.snapshot();
       const agents = Object.values(fleet?.agents ?? {});
       const summary = await active.usageSummary().catch(() => 'Fleet usage: unavailable');
+      const sup = await active.supervisorSummary().catch(() => null);
+      let supText = '';
+      if (sup) {
+        const prov = Object.entries(sup.concurrency.byProvider).map(([p, c]) => `${p}:${c.running}/${c.limit}+${c.queued}q`).join(' ') || 'none';
+        const tok = Object.entries(sup.tokensByProvider).map(([p, t]) => `${p} in=${t.input} out=${t.output} cr=${t.cacheRead} cw=${t.cacheWrite} tot=${t.totalTokens} $${t.cost.toFixed(4)}`).join(' | ') || 'none';
+        const running = sup.agents.filter((a) => a.state === 'running').slice(0, 13)
+          .map((a) => `${a.name} ${a.ageSec ?? 0}s ${a.branch ?? '-'} ${a.worktreePath ?? ''}${(a.ageSec ?? 0) > 900 ? ' STALE' : ''}`);
+        supText = `\nSupervisor: running=${sup.concurrency.running} queued=${sup.concurrency.queued} ${prov}\nTokens: ${tok}${running.length ? `\n${running.join('\n')}` : ''}`;
+      }
       const text = agents.length
-        ? `${agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`).join('\n')}\n${summary}`
+        ? `${agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`).join('\n')}\n${summary}${supText}`
         : 'No swarm workers yet.';
       return { content: [{ type: 'text' as const, text }], details: { count: agents.length } };
     },

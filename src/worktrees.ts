@@ -46,6 +46,10 @@ export async function verifyWorktree(worktree: Worktree): Promise<void> {
   if (!top) throw new Error(`Worktree is missing or not a git checkout: ${worktree.path}. Refusing fallback to the parent cwd.`);
 }
 
+export async function worktreeHead(worktree: Worktree): Promise<string> {
+  return git(worktree.path, ['rev-parse', 'HEAD']);
+}
+
 /** Porcelain change list for coordinator validation; empty string means clean. */
 export async function worktreeStatus(worktree: Worktree): Promise<string> {
   return git(worktree.path, ['status', '--porcelain']);

@@ -21,7 +21,7 @@ import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
 import { ambiguousNameMessage, classifyProviderError, CONTENT_FILTER_GUIDANCE, TRANSIENT_RETRY_MESSAGE, uniqueName } from './workflow.ts';
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
-import { prepareWorktree, removeWorktree, verifyWorktree, worktreeStatus, type Worktree } from './worktrees.ts';
+import { prepareWorktree, removeWorktree, verifyWorktree, worktreeHead, worktreeStatus, type Worktree } from './worktrees.ts';
 import { acquireLease, type Lease } from './lease.ts';
 
 export const context = BACKGROUND_CONTEXT;
@@ -32,6 +32,19 @@ export type RuntimeOptions = {
   models: Models;
   limits?: SchedulerLimits;
   onError?: (error: Error) => void;
+};
+
+export type ProviderConcurrency = { running: number; queued: number; limit: number };
+export type ProviderTokens = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: number };
+export type SupervisorAgent = {
+  id: string; name: string; state: AgentRecord['state']; model: string; provider: string;
+  ageSec?: number; worktreePath?: string; branch?: string; baseCommit?: string; changedFiles?: string; resultCommit?: string;
+};
+export type SupervisorSummary = {
+  generatedAt: number;
+  concurrency: { running: number; queued: number; byProvider: Record<string, ProviderConcurrency> };
+  agents: SupervisorAgent[];
+  tokensByProvider: Record<string, ProviderTokens>;
 };
 
 export type SpawnInput = {
@@ -158,9 +171,11 @@ export async function openRuntime(options: RuntimeOptions) {
         }
 
         let changedFiles: string | undefined;
+        let resultCommit: string | undefined;
         if (agent.worktree) {
           try {
             changedFiles = await worktreeStatus(agent.worktree);
+            resultCommit = await worktreeHead(agent.worktree).catch(() => undefined);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             result = { status: 'failed', text: `${result.text}\nWorktree inspection failed: ${message}` };
@@ -176,6 +191,7 @@ export async function openRuntime(options: RuntimeOptions) {
             record.state = result.status;
             record.finishedAt = runtime.now();
             if (changedFiles !== undefined) record.changedFiles = changedFiles;
+            if (resultCommit !== undefined) record.resultCommit = resultCommit;
             const reportId = `swarm-report:${task.id}`;
             if (!doc.outbox[reportId]) {
               const report: (typeof doc.outbox)[string] = { id: reportId, agentId: agent.id, result, state: 'pending' };
@@ -465,6 +481,47 @@ export async function openRuntime(options: RuntimeOptions) {
     return `Fleet usage:\n${lines.join('\n')}`;
   };
 
+  const supervisorSummary = async (): Promise<SupervisorSummary> => {
+    const fleet = await snapshot();
+    const agents = Object.values(fleet?.agents ?? {}).sort((a, b) => a.queuedAt - b.queuedAt || a.id.localeCompare(b.id));
+    const now = Date.now();
+    const byProvider: Record<string, ProviderConcurrency> = {};
+    for (const a of agents) {
+      const p = byProvider[a.provider] ?? { running: 0, queued: 0, limit: limits.perProvider };
+      if (a.state === 'running') p.running += 1;
+      if (a.state === 'queued') p.queued += 1;
+      byProvider[a.provider] = p;
+    }
+    const tokensByProvider: Record<string, ProviderTokens> = {};
+    for (const agent of agents) {
+      const state = await active.snapshot(UsageDoc, agent.conversationId, context).catch(() => null);
+      for (const value of Object.values(state?.models ?? {})) {
+        const u = value as { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number; cost?: { total?: number } };
+        const provider = agent.provider || 'unknown';
+        const e = tokensByProvider[provider] ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 };
+        e.input += u.input ?? 0; e.output += u.output ?? 0; e.cacheRead += u.cacheRead ?? 0;
+        e.cacheWrite += u.cacheWrite ?? 0; e.totalTokens += u.totalTokens ?? 0; e.cost += u.cost?.total ?? 0;
+        tokensByProvider[provider] = e;
+      }
+    }
+    return {
+      generatedAt: now,
+      concurrency: {
+        running: agents.filter((a) => a.state === 'running').length,
+        queued: agents.filter((a) => a.state === 'queued').length,
+        byProvider,
+      },
+      agents: agents.map((a) => ({
+        id: a.id, name: a.name, state: a.state, model: a.model, provider: a.provider,
+        ...(a.state === 'running' && a.startedAt ? { ageSec: Math.max(0, Math.round((now - a.startedAt) / 1000)) } : {}),
+        ...(a.worktree ? { worktreePath: a.worktree.path, branch: a.worktree.branch, baseCommit: a.worktree.baseCommit } : {}),
+        ...(a.changedFiles !== undefined ? { changedFiles: a.changedFiles } : {}),
+        ...(a.resultCommit ? { resultCommit: a.resultCommit } : {}),
+      })),
+      tokensByProvider,
+    };
+  };
+
   /** Poll durable state until a worker settles; survives queued admission. */
   const waitAgent = async (id: string, signal?: AbortSignal, timeoutMs?: number): Promise<SwarmResult> => {
     const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
@@ -516,6 +573,7 @@ export async function openRuntime(options: RuntimeOptions) {
     waitAgent,
     usage,
     usageSummary,
+    supervisorSummary,
     cleanupWorktree,
     schedule,
     reconcile,
