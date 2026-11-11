@@ -271,3 +271,30 @@ sessions:
 - `swarm_status` and `/swarm` list lines include the agent id next to each
   worker. Found in production: a coordinator hit the ambiguous-name error
   repeatedly on legacy duplicate names with no id in sight.
+
+## Changes in 0.3.3
+
+- `swarm_status` (list form) now appends fleet usage by model from the
+  Durable usage ledger. Supervisors can verify the delegation balance
+  across MiMo, MiniMax and Z.AI from one call, instead of trusting reports.
+  Read it as fresh work: total tokens include cached context re-reads, so
+  compare providers by model line, and pair the numbers with completed
+  worker outcomes.
+
+## Delegation balance (how supervisors should allocate)
+
+Most execution belongs to the three providers, not to Muse.
+Muse supervises, decomposes, integrates and accepts. Per milestone,
+unless a provider genuinely has no fitting task (state why):
+
+- Xiaomi MiMo Flash (`w1-scout`): exploration, file/symbol mapping, audits.
+- Xiaomi MiMo Pro (`w2-impl-strong`) and MiniMax M3.1 Flash (`w3-impl`):
+  the implementation bulk, in parallel in separate worktrees.
+- MiniMax M3.1 Flash at `max` (`w4-audit`): independent review of every
+  implementation result before integration.
+- Z.AI GLM-5.3 Flash (`w5-tests`): regression tests, red/green proof.
+- Z.AI GLM-5.3 at `max` (`w6-fix-strong`): the hardest fix or integration
+  investigation, not routine work.
+
+Check the balance in `swarm_status` fleet usage at each milestone report.
+A provider at zero is a delegation failure to explain, not a footnote.

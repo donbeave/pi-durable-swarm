@@ -165,8 +165,9 @@ export default function durableSwarm(pi: ExtensionAPI) {
       }
       const fleet = await active.snapshot();
       const agents = Object.values(fleet?.agents ?? {});
+      const summary = await active.usageSummary().catch(() => 'Fleet usage: unavailable');
       const text = agents.length
-        ? agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`).join('\n')
+        ? `${agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`).join('\n')}\n${summary}`
         : 'No swarm workers yet.';
       return { content: [{ type: 'text' as const, text }], details: { count: agents.length } };
     },

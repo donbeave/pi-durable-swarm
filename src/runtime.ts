@@ -419,6 +419,27 @@ export async function openRuntime(options: RuntimeOptions) {
     return `${tokens} tokens, $${cost.toFixed(4)} (${parts.join(', ') || 'no model calls'})`;
   };
 
+  /** Fleet-wide spend by model, for delegation-balance reporting. */
+  const usageSummary = async (): Promise<string> => {
+    const fleet = await snapshot();
+    const per = new Map<string, { tokens: number; cost: number }>();
+    for (const agent of Object.values(fleet?.agents ?? {})) {
+      const state = await active.snapshot(UsageDoc, agent.conversationId, context);
+      for (const [key, value] of Object.entries(state?.models ?? {})) {
+        const usageValue = value as { totalTokens?: number; cost?: { total?: number } };
+        const entry = per.get(key) ?? { tokens: 0, cost: 0 };
+        entry.tokens += usageValue.totalTokens ?? 0;
+        entry.cost += usageValue.cost?.total ?? 0;
+        per.set(key, entry);
+      }
+    }
+    if (!per.size) return 'Fleet usage: no usage recorded';
+    const lines = [...per.entries()]
+      .sort((a, b) => b[1].tokens - a[1].tokens)
+      .map(([model, value]) => `${model}: ${value.tokens} tokens, $${value.cost.toFixed(4)}`);
+    return `Fleet usage:\n${lines.join('\n')}`;
+  };
+
   /** Poll durable state until a worker settles; survives queued admission. */
   const waitAgent = async (id: string, signal?: AbortSignal, timeoutMs?: number): Promise<SwarmResult> => {
     const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
@@ -469,6 +490,7 @@ export async function openRuntime(options: RuntimeOptions) {
     waitResult,
     waitAgent,
     usage,
+    usageSummary,
     cleanupWorktree,
     schedule,
     reconcile,
