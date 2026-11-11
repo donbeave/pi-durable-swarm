@@ -8,10 +8,14 @@ import type { AgentRecord } from './state.ts';
 import { formatJoin, substitutePrevious } from './workflow.ts';
 
 function describe(agent: AgentRecord): string {
+  const age =
+    agent.state === 'running' && agent.startedAt
+      ? `\nRunning for: ${Math.max(0, Math.round((Date.now() - agent.startedAt) / 1000))}s`
+      : '';
   const worktree = agent.worktree
     ? `\nWorktree retained: ${agent.worktree.path}\nBranch: ${agent.worktree.branch}\nBase: ${agent.worktree.baseCommit}\nChanged files:\n${agent.changedFiles || 'none'}`
     : '';
-  return `Agent ${agent.name} (${agent.id})\nRole: ${agent.role}\nModel: ${agent.model}\nThinking: ${agent.thinking}\nState: ${agent.state}${worktree}`;
+  return `Agent ${agent.name} (${agent.id})\nRole: ${agent.role}\nModel: ${agent.model}\nThinking: ${agent.thinking}\nState: ${agent.state}${age}${worktree}`;
 }
 
 /**
@@ -160,14 +164,14 @@ export default function durableSwarm(pi: ExtensionAPI) {
     label: 'Swarm worker result',
     description: 'Collect a swarm worker result by id or unique name. wait=true blocks until its latest task settles. Failed or stopped work is returned as an error, never as success.',
     parameters: Type.Object(
-      { agent_id: Type.String(), wait: Type.Optional(Type.Boolean()) },
+      { agent_id: Type.String(), wait: Type.Optional(Type.Boolean()), timeout_ms: Type.Optional(Type.Number()) },
       { additionalProperties: false },
     ),
     async execute(_callId, args, signal, _onUpdate, ctx) {
       const active = await ready(ctx);
       let agent = await active.get(args.agent_id);
       if (args.wait) {
-        await active.waitAgent(agent.id, signal);
+        await active.waitAgent(agent.id, signal, args.timeout_ms);
         agent = await active.get(args.agent_id);
       }
       if (!agent.result) {
@@ -291,7 +295,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
     label: 'Join swarm workers',
     description: 'Wait for and collect several swarm workers at once by id or unique name. Returns one clipped section per worker; failed or stopped workers are reported as failures, never as success.',
     parameters: Type.Object(
-      { agent_ids: Type.Array(Type.String(), { minItems: 1, maxItems: 6 }) },
+      { agent_ids: Type.Array(Type.String(), { minItems: 1, maxItems: 6 }), timeout_ms: Type.Optional(Type.Number()) },
       { additionalProperties: false },
     ),
     async execute(_callId, args, signal, _onUpdate, ctx) {
@@ -299,7 +303,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
       const entries = [];
       for (const id of args.agent_ids) {
         const agent = await active.get(id);
-        const result = await active.waitAgent(agent.id, signal);
+        const result = await active.waitAgent(agent.id, signal, args.timeout_ms);
         entries.push({ name: agent.name, status: result.status, text: result.text });
       }
       return {

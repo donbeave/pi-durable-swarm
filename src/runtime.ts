@@ -21,6 +21,7 @@ import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
 import { prepareWorktree, removeWorktree, verifyWorktree, worktreeStatus, type Worktree } from './worktrees.ts';
+import { acquireLease, type Lease } from './lease.ts';
 
 export const context = BACKGROUND_CONTEXT;
 
@@ -47,6 +48,7 @@ const swarmCoding = defineExtension({ name: 'pi-durable-swarm.coding', tools: co
 
 export async function openRuntime(options: RuntimeOptions) {
   await mkdir(options.directory, { recursive: true, mode: 0o700 });
+  const lease: Lease = await acquireLease(options.directory);
   const limits = options.limits ?? DEFAULT_LIMITS;
   const path = join(options.directory, 'swarm.sqlite');
 
@@ -176,7 +178,8 @@ export async function openRuntime(options: RuntimeOptions) {
   registry.install(swarmCoding);
   registry.install(defineExtension({ name: 'pi-durable-swarm.execution', tasks: [Anchor, Runner] }));
 
-  harness = await Harness.open(
+  try {
+    harness = await Harness.open(
     await openNodeSqliteStorage(path),
     {
       models: options.models,
@@ -192,7 +195,11 @@ export async function openRuntime(options: RuntimeOptions) {
       },
     },
     context,
-  );
+    );
+  } catch (error) {
+    await lease.release();
+    throw error;
+  }
 
   const active = harness;
   const root = await active.root(context);
@@ -394,10 +401,18 @@ export async function openRuntime(options: RuntimeOptions) {
   };
 
   /** Poll durable state until a worker settles; survives queued admission. */
-  const waitAgent = async (id: string, signal?: AbortSignal): Promise<SwarmResult> => {
+  const waitAgent = async (id: string, signal?: AbortSignal, timeoutMs?: number): Promise<SwarmResult> => {
+    const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
     let polls = 0;
     for (;;) {
       signal?.throwIfAborted();
+      if (deadline !== undefined && Date.now() > deadline) {
+        const current = await get(id);
+        throw new Error(
+          `Timed out after ${timeoutMs}ms waiting for ${current.name} [${current.state}]. ` +
+            'The worker was NOT stopped. Collect it later with swarm_result, or stop it with swarm_stop.',
+        );
+      }
       // Periodically reconcile runners that faulted outside their phases,
       // so a dead runner settles here instead of polling forever.
       if (polls % 4 === 0) await reconcile().catch(() => undefined);
@@ -449,6 +464,7 @@ export async function openRuntime(options: RuntimeOptions) {
       await scheduling.catch(() => undefined);
       await active.close(context);
       harness = undefined;
+      await lease.release();
     },
   };
 }

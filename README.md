@@ -95,9 +95,12 @@ manually. Worker instructions forbid commits and merges.
 
 ## Limits you must know
 
-- **One Pi process per project.** The store has no cross-process lease. A
-  second Pi in the same project can steal tasks and break the concurrency
-  bounds. Run one coordinator per project.
+- **One Pi process per project, enforced.** The runtime takes an owner
+  lockfile (`owner.lock`) for its store. A second Pi, a second runtime, or a
+  side script that opens the same store is rejected while the owner lives,
+  with instructions to talk to the running coordinator. A lock left by a
+  dead process is reclaimed. Never open `swarm.sqlite` from a probe script
+  while a coordinator runs; use the coordinator's own `swarm_status`.
 - **Read-only roles are an instruction boundary, not a sandbox.** Scouts and
   auditors keep a shell for inspection, and the shell could write. Their
   system prompt forbids it. Do not rely on a read-only role for adversarial
@@ -216,3 +219,27 @@ documented runs, and the 15 unit tests cover the pure modules); a wait
 deadline or stall watchdog for `swarm_join` and chains; live worker
 observability beyond status polls; default worktree isolation for write
 roles in parallel fan-outs.
+
+## Changes in 0.3.0 (isolation hardening)
+
+Found while supervising two live Muse sessions that run separate
+swarms on separate projects:
+
+- **Owner lease.** One store now has exactly one owner process, enforced by
+  a lockfile instead of by convention. A second opener is rejected while the
+  owner lives. A dead owner's lock is reclaimed. This closes the
+  "probe script opens the runtime next to a live coordinator" hole, which
+  could steal tasks and break the concurrency bounds.
+- **Wait deadlines.** `swarm_result` and `swarm_join` accept `timeout_ms`.
+  A timeout reports the worker's current state and leaves the worker running
+  for later collection; it never marks the worker failed or stopped.
+- **`swarm_status` shows running time** for a running worker, so a
+  coordinator can spot a stall without reading raw state.
+- Runtime-level tests now cover the lease, reopening after close, and the
+  spawn-time registry check (19 tests in total).
+
+Isolation rule for running several swarms at once: separate projects get
+separate stores, separate coordinators, and separate RPC sockets. Name each
+socket after its project (for example `/tmp/<project>-swarm.sock`), never a
+shared generic name. Two swarms on one machine still share the same provider
+accounts, so their per-provider worker counts add up at the provider.
