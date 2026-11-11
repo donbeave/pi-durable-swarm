@@ -89,7 +89,14 @@ export default function durableSwarm(pi: ExtensionAPI) {
     let recovery = '';
     try {
       const active = runtime ?? ((ctx as { modelRegistry?: unknown }).modelRegistry ? await ready(ctx) : undefined);
-      if (active) recovery = formatRecoveryNotice((await active.supervisorSummary()).interrupted);
+      if (active) {
+        const sup = await active.supervisorSummary();
+        recovery = formatRecoveryNotice(sup.interrupted);
+        // Refresh the on-disk supervisor snapshot every coordinator turn, not
+        // only on swarm tool calls, so external checks never read stale state
+        // while the coordinator is active between tool invocations.
+        await writeSupervisorSnapshot(ctx.cwd, sup).catch(() => undefined);
+      }
     } catch {
       recovery = '';
     }
