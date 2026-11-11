@@ -10,7 +10,7 @@ export const DEFAULT_LIMITS: SchedulerLimits = { maxConcurrent: 12, perProvider:
 export type SchedulableAgent = {
   id: string;
   provider: string;
-  state: 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+  state: 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
   queuedAt: number;
 };
 

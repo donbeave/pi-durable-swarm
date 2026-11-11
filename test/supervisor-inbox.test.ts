@@ -115,6 +115,7 @@ test('snapshot file written with required keys', async () => {
     tokensByProvider: { zai: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, totalTokens: 18, cost: 0.01 } },
     stockpileDirty: 3,
     stockpileUnpushed: 2,
+    interrupted: { count: 0, agents: [] },
   };
   const written = await writeSupervisorSnapshot(ws, sup);
   assert.equal(written, supervisorSummaryPath(ws));

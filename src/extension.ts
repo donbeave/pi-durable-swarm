@@ -6,8 +6,9 @@ import { ELIGIBLE_MODELS, ROLES } from './policy.ts';
 import { openRuntime, type SwarmRuntime } from './runtime.ts';
 import type { AgentRecord } from './state.ts';
 import { clampJoinTimeout, formatJoin, sharedWriterWarning, substitutePrevious, type WriterPeer } from './workflow.ts';
-import { ackSupervisorDirective, prependSupervisorDirectives, readSupervisorTurnMessage } from './supervisor-inbox.ts';
+import { ackSupervisorDirective, prependSupervisorDirectives, readSupervisorTurnMessage, SUPERVISOR_TURN_CUSTOM_TYPE } from './supervisor-inbox.ts';
 import { writeSupervisorSnapshot } from './supervisor-snapshot.ts';
+import { formatInterruptedLine, formatRecoveryNotice } from './recovery.ts';
 
 async function writerWarning(active: SwarmRuntime, self: AgentRecord): Promise<string> {
   const fleet = await active.snapshot();
@@ -29,7 +30,8 @@ function describe(agent: AgentRecord): string {
   const worktree = agent.worktree
     ? `\nWorktree retained: ${agent.worktree.path}\nBranch: ${agent.worktree.branch}\nBase: ${agent.worktree.baseCommit}\nChanged files:\n${agent.changedFiles || 'none'}`
     : '';
-  return `Agent ${agent.name} (${agent.id})\nRole: ${agent.role}\nModel: ${agent.model}\nThinking: ${agent.thinking}\nState: ${agent.state}${age}${worktree}`;
+  const interrupted = agent.state === 'interrupted' ? `\nInterrupted: ${agent.interruptedReason ?? 'coordinator-stop'} at ${agent.interruptedAt ?? ''}` : '';
+  return `Agent ${agent.name} (${agent.id})\nRole: ${agent.role}\nModel: ${agent.model}\nThinking: ${agent.thinking}\nState: ${agent.state}${age}${interrupted}${worktree}`;
 }
 
 /**
@@ -37,8 +39,8 @@ function describe(agent: AgentRecord): string {
  * One Pi coordinator owns up to six workers (two per eligible provider) whose
  * conversations, tasks and results are committed to SQLite by
  * @earendil-works/pi-durable before anything is shown. Killing or restarting
- * Pi loses nothing: reopening the same project resumes queued and running
- * workers from their last durable checkpoint.
+ * Pi loses nothing: reopening the same project marks queued and running
+ * workers interrupted (coordinator-stop) for explicit resume or respawn.
  */
 export default function durableSwarm(pi: ExtensionAPI) {
   let runtime: SwarmRuntime | undefined;
@@ -83,8 +85,17 @@ export default function durableSwarm(pi: ExtensionAPI) {
   // message is appended to the run's context by Pi. `turn_start` cannot be
   // used for this: its handler has no result channel to inject content.
   pi.on('before_agent_start', async (_event, ctx) => {
-    const message = await readSupervisorTurnMessage(ctx.cwd);
-    return message ? { message } : undefined;
+    const directive = await readSupervisorTurnMessage(ctx.cwd);
+    let recovery = '';
+    try {
+      const active = runtime ?? ((ctx as { modelRegistry?: unknown }).modelRegistry ? await ready(ctx) : undefined);
+      if (active) recovery = formatRecoveryNotice((await active.supervisorSummary()).interrupted);
+    } catch {
+      recovery = '';
+    }
+    const parts = [directive?.content, recovery].filter((p): p is string => Boolean(p));
+    if (!parts.length) return undefined;
+    return { message: { customType: SUPERVISOR_TURN_CUSTOM_TYPE, content: parts.join('\n\n'), display: true as const } };
   });
   pi.on('session_shutdown', async () => {
     await runtime?.close();
@@ -187,7 +198,8 @@ export default function durableSwarm(pi: ExtensionAPI) {
         const tok = Object.entries(sup.tokensByProvider).map(([p, t]) => `${p} in=${t.input} out=${t.output} cr=${t.cacheRead} cw=${t.cacheWrite} tot=${t.totalTokens} $${t.cost.toFixed(4)}`).join(' | ') || 'none';
         const running = sup.agents.filter((a) => a.state === 'running').slice(0, 13)
           .map((a) => `${a.name} ${a.ageSec ?? 0}s ${a.branch ?? '-'} ${a.worktreePath ?? ''}${(a.ageSec ?? 0) > 900 ? ' STALE' : ''}`);
-        supText = `\nSupervisor: running=${sup.concurrency.running} queued=${sup.concurrency.queued} Stockpile: dirty=${sup.stockpileDirty} unpushed=${sup.stockpileUnpushed} ${prov}\nTokens: ${tok}${running.length ? `\n${running.join('\n')}` : ''}`;
+        const interruptedLine = formatInterruptedLine(sup.interrupted);
+        supText = `\nSupervisor: running=${sup.concurrency.running} queued=${sup.concurrency.queued} Stockpile: dirty=${sup.stockpileDirty} unpushed=${sup.stockpileUnpushed} ${prov}\nTokens: ${tok}${running.length ? `\n${running.join('\n')}` : ''}${interruptedLine ? `\n${interruptedLine}` : ''}`;
       }
       const text = agents.length
         ? `${agents.map((agent) => `${agent.name} [${agent.state}] ${agent.model}:${agent.thinking} (${agent.id})`).join('\n')}\n${summary}${supText}`

@@ -23,6 +23,7 @@ import { ambiguousNameMessage, classifyProviderError, CONTENT_FILTER_GUIDANCE, T
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
 import { prepareWorktree, removeWorktree, verifyWorktree, worktreeHead, worktreeStatus, worktreeStockpile, type Worktree } from './worktrees.ts';
 import { acquireLease, type Lease } from './lease.ts';
+import { buildInterruptedSummary, sweepInterruptedAgents, type InterruptedSummary } from './recovery.ts';
 
 export const context = BACKGROUND_CONTEXT;
 
@@ -48,6 +49,7 @@ export type SupervisorSummary = {
   tokensByProvider: Record<string, ProviderTokens>;
   stockpileDirty: number;
   stockpileUnpushed: number;
+  interrupted: InterruptedSummary;
 };
 
 export type SpawnInput = {
@@ -268,6 +270,8 @@ export async function openRuntime(options: RuntimeOptions) {
       agent.state = 'running';
       agent.startedAt = Date.now();
       delete agent.pendingTask;
+      delete agent.interruptedReason;
+      delete agent.interruptedAt;
     }, context);
   }
 
@@ -287,6 +291,15 @@ export async function openRuntime(options: RuntimeOptions) {
     const child = await active.conversation(agent.conversationId, context);
     if (!child) throw new Error(`Missing conversation for ${agent.id}`);
     return child;
+  };
+
+  const sweepInterrupted = async (): Promise<number> => {
+    let count = 0;
+    await root.commit(async (tx) => {
+      const doc = await tx.doc(Fleet, root.id);
+      count = sweepInterruptedAgents(doc.agents, Date.now());
+    }, context);
+    return count;
   };
 
   /** Reconcile durable Runner tasks that faulted outside the Runner phases. */
@@ -398,11 +411,13 @@ export async function openRuntime(options: RuntimeOptions) {
         record.pendingTask = `${record.pendingTask ?? ''}\n\nAdditional instruction: ${input.message}`;
         return;
       }
-      if (record.state === 'completed' || record.state === 'failed' || record.state === 'stopped') {
-        // Idle: re-enter through the scheduler so hard bounds still apply.
+      if (record.state === 'completed' || record.state === 'failed' || record.state === 'stopped' || record.state === 'interrupted') {
+        // Idle (incl. interrupted retry/resume): re-enter through the scheduler so hard bounds still apply.
         record.state = 'queued';
         record.pendingTask = input.message;
         record.queuedAt = Date.now();
+        delete record.interruptedReason;
+        delete record.interruptedAt;
         return;
       }
       const runner = await tx.createTask(
@@ -427,15 +442,18 @@ export async function openRuntime(options: RuntimeOptions) {
 
   const stop = async (id: string): Promise<void> => {
     const agent = await get(id);
-    if (agent.state === 'queued') {
+    if (agent.state === 'queued' || agent.state === 'interrupted') {
+      const wasInterrupted = agent.state === 'interrupted';
       await root.commit(async (tx) => {
         const doc = await tx.doc(Fleet, root.id);
         const record = doc.agents[agent.id];
-        if (record && record.state === 'queued') {
+        if (record && (record.state === 'queued' || record.state === 'interrupted')) {
           record.state = 'stopped';
-          record.result = { status: 'stopped', text: 'Agent stopped while queued' };
+          record.result = { status: 'stopped', text: wasInterrupted ? 'Agent stopped while interrupted' : 'Agent stopped while queued' };
           record.finishedAt = Date.now();
           delete record.pendingTask;
+          delete record.interruptedReason;
+          delete record.interruptedAt;
         }
       }, context);
       return;
@@ -535,6 +553,7 @@ export async function openRuntime(options: RuntimeOptions) {
       tokensByProvider,
       stockpileDirty,
       stockpileUnpushed,
+      interrupted: buildInterruptedSummary(agents),
     };
   };
 
@@ -557,6 +576,9 @@ export async function openRuntime(options: RuntimeOptions) {
       polls += 1;
       const agent = await get(id);
       if (agent.result) return agent.result;
+      if (agent.state === 'interrupted') {
+        return { status: 'failed', text: `Agent ${agent.name} interrupted (coordinator stop). Resume with swarm_steer, respawn, or swarm_stop it.` };
+      }
       if (agent.state === 'failed' || agent.state === 'stopped') {
         return agent.result ?? { status: agent.state, text: `Agent ${agent.name} ${agent.state}` };
       }
@@ -575,6 +597,7 @@ export async function openRuntime(options: RuntimeOptions) {
     return removeWorktree(agent.worktree);
   };
 
+  await sweepInterrupted();
   await reconcile();
   active.resume();
 
@@ -593,6 +616,7 @@ export async function openRuntime(options: RuntimeOptions) {
     cleanupWorktree,
     schedule,
     reconcile,
+    sweepInterrupted,
     async acknowledge(reportId: string): Promise<void> {
       await root.commit(async (tx) => {
         const fleet = await tx.doc(Fleet, root.id);

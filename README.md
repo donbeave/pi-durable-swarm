@@ -5,8 +5,9 @@
 One Pi coordinator owns up to **six workers — two per provider (Xiaomi MiMo,
 MiniMax, Z.AI)** — whose conversations, tasks and results are committed to
 SQLite by [`@earendil-works/pi-durable`](https://github.com/earendil-works/pi/tree/main/packages/durable)
-before anything is shown. Kill Pi, restart it, reopen the project: queued and
-running workers resume from their last durable checkpoint, and completed
+before anything is shown. Kill Pi, restart it, reopen the project: workers
+left `running` or `queued` by the dead coordinator are marked `interrupted`
+(`coordinator-stop`, see below) instead of silently resuming, and completed
 results stay collectable. Nothing is silently lost, duplicated or substituted.
 
 ## Why this exists
@@ -81,6 +82,28 @@ best-effort writes the supervisor snapshot (including the
 `supervisorSummary` JSON as-is) to
 `<workspace>/.pi/durable-swarm/supervisor-summary.json`.
 
+## Coordinator-stop recovery (0.6.3)
+
+On startup the runtime sweeps the durable fleet before resuming the harness:
+any agent left `running` or `queued` by a previous coordinator process —
+whose runner cannot be live in the new process — becomes `interrupted` with
+`interruptedReason: 'coordinator-stop'` and an `interruptedAt` timestamp.
+`completed`, `failed` and `stopped` agents are never touched, and retained
+worktree files on disk are not modified. `supervisorSummary` reports
+`interrupted: {count, agents: [{name, model, provider, worktreePath, branch}]}`,
+and `swarm_status` renders `Interrupted (coordinator stop): N — resume or
+respawn before new work` when N > 0. While N > 0, every coordinator turn
+(`before_agent_start`) also surfaces a `RECOVERY NOTICE` naming the
+interrupted agents.
+
+To return an interrupted agent to work, the coordinator must either resume
+it with `swarm_steer` (the existing retry/resume path, which now accepts
+`interrupted` and re-queues it through the scheduler), respawn a same-name
+continuation with `swarm_spawn` and then mark the old interrupted record
+with `swarm_stop`, or explicitly `swarm_stop` it. Leaving agents
+`interrupted` while spawning unrelated new work does not clear the notice:
+it repeats every turn until the interrupted count reaches zero.
+
 ## Workers and models (exact pins only)
 
 | Worker | Role | Model | Thinking |
@@ -153,7 +176,7 @@ manually. Worker instructions forbid commits and merges.
 - Reads may replay after a crash; writes, edits and shell commands are marked
   replay-unsafe and are never blindly re-executed. A model request interrupted
   by a crash counts as a failed attempt and the conversation continues.
-- While Pi is closed, work pauses; on reopen it resumes. (A separate daemon
+- While Pi is closed, work pauses; on reopen, running/queued workers are marked `interrupted` (coordinator-stop) for explicit resume, respawn or stop — they do not auto-resume. (A separate daemon
   that keeps working while the host is dead is intentionally out of scope.)
 
 ## Verified behaviour (2026-11-11, Pi 1.5.0)

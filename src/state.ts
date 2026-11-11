@@ -3,7 +3,7 @@ import type { Worktree } from './worktrees.ts';
 
 export type SwarmResult = { status: 'completed' | 'failed' | 'stopped'; text: string };
 
-export type AgentState = 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+export type AgentState = 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
 export type AgentRecord = {
   id: string;
@@ -29,6 +29,8 @@ export type AgentRecord = {
   changedFiles?: string;
   /** HEAD of the retained worktree when the latest task settled. */
   resultCommit?: string;
+  interruptedReason?: 'coordinator-stop';
+  interruptedAt?: number;
 };
 
 export type SwarmReport = {
