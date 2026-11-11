@@ -20,7 +20,7 @@ export async function readSupervisorDirectives(workspace: string): Promise<Super
     return [];
   }
   const files = entries
-    .filter((e) => e.isFile() && e.name.endsWith('.md'))
+    .filter((e) => e.isFile() && e.name.startsWith('SUP-') && e.name.endsWith('.md'))
     .map((e) => e.name)
     .sort();
   const out: SupervisorDirective[] = [];
@@ -51,8 +51,8 @@ export async function prependSupervisorDirectives(workspace: string, text: strin
 }
 
 export async function ackSupervisorDirective(workspace: string, file: string): Promise<string> {
-  if (!file || file !== basename(file) || file.includes('/') || file.includes('\\') || file === '.' || file === '..' || !file.endsWith('.md')) {
-    throw new Error(`Invalid supervisor directive file: ${file}. Pass a plain *.md file name from the supervisor inbox.`);
+  if (!file || file !== basename(file) || file.includes('/') || file.includes('\\') || file === '.' || file === '..' || !file.startsWith('SUP-') || !file.endsWith('.md')) {
+    throw new Error(`Invalid supervisor directive file: ${file}. Pass a plain SUP-*.md file name from the supervisor inbox.`);
   }
   const dir = supervisorInboxDir(workspace);
   const ackedDir = join(dir, 'acked');

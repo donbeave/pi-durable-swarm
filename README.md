@@ -58,16 +58,21 @@ spend from the Durable usage ledger, by model. For example:
 ## Supervisor inbox + join cap
 
 Supervisors write directives as Markdown files in
-`<workspace>/.pi/durable-swarm/supervisor-inbox/*.md` (create the file;
-the directory is created lazily by the extension). On every `swarm_*`
-tool result, unacked files are prepended as
+`<workspace>/.pi/durable-swarm/supervisor-inbox/SUP-*.md` (create the
+file; the directory is created lazily by the extension). Only
+`SUP-*.md` files are surfaced or ackable; other `.md` files in the
+inbox are ignored. On every `swarm_*`
+tool result, unacked `SUP-*.md` files are prepended as
 `SUPERVISOR DIRECTIVES (unacked):` with each file's first 40 lines, so
 the coordinator sees them at its next Pi tool call regardless of outer
 chat delivery. Acknowledge with `swarm_supervisor_ack {file}`, which
 moves the file to `supervisor-inbox/acked/<file>`; acked files are
 ignored. `swarm_join` clamps `timeout_ms` to at most 240000 ms (a
 missing or larger value uses 240000). `swarm_status` supervisor summary
-adds `Stockpile: dirty=X unpushed=Y` from worktree agents.
+adds `Stockpile: dirty=X unpushed=Y` from worktree agents, and also
+best-effort writes the supervisor snapshot (including the
+`supervisorSummary` JSON as-is) to
+`<workspace>/.pi/durable-swarm/supervisor-summary.json`.
 
 ## Workers and models (exact pins only)
 

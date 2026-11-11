@@ -7,6 +7,7 @@ import { openRuntime, type SwarmRuntime } from './runtime.ts';
 import type { AgentRecord } from './state.ts';
 import { clampJoinTimeout, formatJoin, sharedWriterWarning, substitutePrevious, type WriterPeer } from './workflow.ts';
 import { ackSupervisorDirective, prependSupervisorDirectives } from './supervisor-inbox.ts';
+import { writeSupervisorSnapshot } from './supervisor-snapshot.ts';
 
 async function writerWarning(active: SwarmRuntime, self: AgentRecord): Promise<string> {
   const fleet = await active.snapshot();
@@ -172,6 +173,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
       const sup = await active.supervisorSummary().catch(() => null);
       let supText = '';
       if (sup) {
+        await writeSupervisorSnapshot(ctx.cwd, sup).catch(() => undefined);
         const prov = Object.entries(sup.concurrency.byProvider).map(([p, c]) => `${p}:${c.running}/${c.limit}+${c.queued}q`).join(' ') || 'none';
         const tok = Object.entries(sup.tokensByProvider).map(([p, t]) => `${p} in=${t.input} out=${t.output} cr=${t.cacheRead} cw=${t.cacheWrite} tot=${t.totalTokens} $${t.cost.toFixed(4)}`).join(' | ') || 'none';
         const running = sup.agents.filter((a) => a.state === 'running').slice(0, 13)
@@ -358,7 +360,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
   pi.registerTool({
     name: 'swarm_supervisor_ack',
     label: 'Ack supervisor directive',
-    description: 'Acknowledge one supervisor directive: moves supervisor-inbox/<file> to supervisor-inbox/acked/<file>. Pass a plain *.md file name.',
+    description: 'Acknowledge one supervisor directive: moves supervisor-inbox/<file> to supervisor-inbox/acked/<file>. Pass a plain SUP-*.md file name; other .md files in the inbox are ignored and not ackable.',
     parameters: Type.Object({ file: Type.String() }, { additionalProperties: false }),
     async execute(_callId, args, _signal, _onUpdate, ctx) {
       await ackSupervisorDirective(ctx.cwd, args.file);
