@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { buildInterruptedSummary, formatInterruptedLine, formatRecoveryNotice, sweepInterruptedAgents } from '../src/recovery.ts';
+import { buildInterruptedSummary, formatInterruptedLine, formatRecoveryNotice, formatStaleNotice, sweepInterruptedAgents } from '../src/recovery.ts';
 import type { AgentRecord } from '../src/state.ts';
 
 function agent(partial: Partial<AgentRecord> & { id: string; name: string; state: AgentRecord['state'] }): AgentRecord {
@@ -72,4 +72,21 @@ test('summary counts interrupted with worktree info, line and notice render only
   assert.equal(empty.count, 0);
   assert.equal(formatInterruptedLine(empty), '');
   assert.equal(formatRecoveryNotice(empty), '');
+});
+
+test('stale notice lists only running agents past threshold, oldest first', () => {
+  const agents = [
+    { name: 'fresh', model: 'xiaomi/mimo-v2.6-flash', state: 'running', ageSec: 60 },
+    { name: 'old-a', model: 'zai/glm-5.3-flash', state: 'running', ageSec: 1800 },
+    { name: 'old-b', model: 'minimax/MiniMax-M3.1-Flash', state: 'running', ageSec: 3600 },
+    { name: 'done-old', model: 'zai/glm-5.3-flash', state: 'completed', ageSec: 9999 },
+    { name: 'no-age', model: 'zai/glm-5.3-flash', state: 'running' },
+  ];
+  const notice = formatStaleNotice(agents);
+  assert.match(notice, /^STALE WORKER NOTICE: 2 /);
+  assert.ok(notice.indexOf('old-b') < notice.indexOf('old-a'), 'oldest first');
+  assert.match(notice, /old-b \(minimax\/MiniMax-M3\.1-Flash, 60m\)/);
+  assert.doesNotMatch(notice, /fresh|done-old|no-age/);
+  assert.equal(formatStaleNotice([agents[0], agents[3]]), '');
+  assert.match(formatStaleNotice(agents, 59), /3 running/);
 });

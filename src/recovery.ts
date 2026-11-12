@@ -46,6 +46,24 @@ export function formatInterruptedLine(summary: InterruptedSummary): string {
   return `Interrupted (coordinator stop): ${summary.count} — resume or respawn before new work`;
 }
 
+export const STALE_NOTICE_THRESHOLD_SEC = 900;
+
+export function formatStaleNotice(
+  agents: { name: string; model: string; state: string; ageSec?: number }[],
+  thresholdSec: number = STALE_NOTICE_THRESHOLD_SEC,
+): string {
+  const stale = agents
+    .filter((a) => a.state === 'running' && (a.ageSec ?? 0) > thresholdSec)
+    .sort((a, b) => (b.ageSec ?? 0) - (a.ageSec ?? 0));
+  if (!stale.length) return '';
+  const list = stale.map((a) => `${a.name} (${a.model}, ${Math.round((a.ageSec ?? 0) / 60)}m)`).join(', ');
+  return (
+    `STALE WORKER NOTICE: ${stale.length} running agent(s) older than ${Math.round(thresholdSec / 60)}m: ${list}. ` +
+    'Split each into <15m workers, steer it with swarm_steer, or stop it with swarm_stop. ' +
+    'This notice repeats every turn until no stale agents remain.'
+  );
+}
+
 export function formatRecoveryNotice(summary: InterruptedSummary): string {
   if (!summary.count) return '';
   const names = summary.agents.map((a) => a.name).join(', ');

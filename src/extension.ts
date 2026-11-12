@@ -8,7 +8,7 @@ import type { AgentRecord } from './state.ts';
 import { clampJoinTimeout, formatJoin, sharedWriterWarning, substitutePrevious, type WriterPeer } from './workflow.ts';
 import { ackSupervisorDirective, prependSupervisorDirectives, readSupervisorTurnMessage, SUPERVISOR_TURN_CUSTOM_TYPE } from './supervisor-inbox.ts';
 import { writeSupervisorSnapshot } from './supervisor-snapshot.ts';
-import { formatInterruptedLine, formatRecoveryNotice } from './recovery.ts';
+import { formatInterruptedLine, formatRecoveryNotice, formatStaleNotice } from './recovery.ts';
 
 async function writerWarning(active: SwarmRuntime, self: AgentRecord): Promise<string> {
   const fleet = await active.snapshot();
@@ -91,7 +91,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
       const active = runtime ?? ((ctx as { modelRegistry?: unknown }).modelRegistry ? await ready(ctx) : undefined);
       if (active) {
         const sup = await active.supervisorSummary();
-        recovery = formatRecoveryNotice(sup.interrupted);
+        recovery = [formatRecoveryNotice(sup.interrupted), formatStaleNotice(sup.agents)].filter(Boolean).join('\n\n');
         // Refresh the on-disk supervisor snapshot every coordinator turn, not
         // only on swarm tool calls, so external checks never read stale state
         // while the coordinator is active between tool invocations.
