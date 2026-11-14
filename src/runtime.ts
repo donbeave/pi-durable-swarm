@@ -17,7 +17,7 @@ import {
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { assertThinking, ELIGIBLE_MODELS, resolveModel, roleInstructions, ROLES, type Thinking } from './policy.ts';
-import { admit, DEFAULT_LIMITS, type SchedulerLimits } from './scheduler.ts';
+import { admit, DEFAULT_LIMITS, providerLimit, type SchedulerLimits } from './scheduler.ts';
 import { Fleet, type AgentRecord, type SwarmResult } from './state.ts';
 import { ambiguousNameMessage, classifyProviderError, CONTENT_FILTER_GUIDANCE, TRANSIENT_RETRY_MESSAGE, uniqueName } from './workflow.ts';
 import { codingTools, READ_ONLY_TOOLS, WRITE_TOOLS } from './tools.ts';
@@ -508,7 +508,7 @@ export async function openRuntime(options: RuntimeOptions) {
     const now = Date.now();
     const byProvider: Record<string, ProviderConcurrency> = {};
     for (const a of agents) {
-      const p = byProvider[a.provider] ?? { running: 0, queued: 0, limit: limits.perProvider };
+      const p = byProvider[a.provider] ?? { running: 0, queued: 0, limit: providerLimit(limits, a.provider) };
       if (a.state === 'running') p.running += 1;
       if (a.state === 'queued') p.queued += 1;
       byProvider[a.provider] = p;

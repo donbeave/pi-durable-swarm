@@ -3,9 +3,28 @@
 // Limits are hard bounds, not approximate policy: a worker starts only when
 // both the global slot and its provider slot are free.
 
-export type SchedulerLimits = { maxConcurrent: number; perProvider: number };
+export type SchedulerLimits = {
+  maxConcurrent: number;
+  /** Default per-provider cap when providerCaps has no entry for the provider. */
+  perProvider: number;
+  /** Per-provider cap overrides, keyed by provider id (e.g. "minimax"). */
+  providerCaps?: Readonly<Record<string, number>>;
+};
 
-export const DEFAULT_LIMITS: SchedulerLimits = { maxConcurrent: 12, perProvider: 4 };
+// MiniMax and MiMo get raised caps: their published API limits
+// (MiniMax-M3.1-Flash 200 RPM / 10M TPM; MiMo V2.6 100 RPM / 10M TPM) leave
+// ample headroom for 8 concurrent long-running workers each, and the operator
+// wants both burned in parallel. Other providers stay at 4.
+export const DEFAULT_LIMITS: SchedulerLimits = {
+  maxConcurrent: 20,
+  perProvider: 4,
+  providerCaps: { minimax: 8, 'xiaomi-token-plan-sgp': 8 },
+};
+
+/** Effective concurrency cap for one provider under the given limits. */
+export function providerLimit(limits: SchedulerLimits, provider: string): number {
+  return limits.providerCaps?.[provider] ?? limits.perProvider;
+}
 
 export type SchedulableAgent = {
   id: string;
@@ -29,7 +48,7 @@ export function admit(agents: readonly SchedulableAgent[], limits: SchedulerLimi
   for (const agent of queued) {
     if (globalFree <= 0) break;
     const used = providerRunning.get(agent.provider) ?? 0;
-    if (used >= limits.perProvider) continue;
+    if (used >= providerLimit(limits, agent.provider)) continue;
     admitted.push(agent.id);
     providerRunning.set(agent.provider, used + 1);
     globalFree -= 1;

@@ -32,7 +32,36 @@ test('running workers consume both slots', () => {
     agent('q1', 'minimax', 'queued', 1),
     agent('q2', 'zai', 'queued', 2),
   ];
-  assert.deepEqual(admit(agents), ['q2']);
+  // MiniMax cap is 8, so q1 still fits; zai q2 follows in queued order.
+  assert.deepEqual(admit(agents), ['q1', 'q2']);
+});
+
+test('minimax cap is eight while other providers stay at four', () => {
+  const minimax = Array.from({ length: 10 }, (_, i) => agent(`m${i}`, 'minimax', 'queued', i + 1));
+  assert.equal(admit(minimax).length, 8);
+  const zai = Array.from({ length: 6 }, (_, i) => agent(`z${i}`, 'zai', 'queued', i + 1));
+  assert.equal(admit(zai).length, 4);
+});
+
+test('xiaomi cap is eight and minimax plus xiaomi fit the raised global cap', () => {
+  const xiaomi = Array.from({ length: 10 }, (_, i) => agent(`x${i}`, 'xiaomi-token-plan-sgp', 'queued', i + 1));
+  assert.equal(admit(xiaomi).length, 8);
+  const both = [
+    ...Array.from({ length: 8 }, (_, i) => agent(`m${i}`, 'minimax', 'queued', i + 1)),
+    ...Array.from({ length: 8 }, (_, i) => agent(`x${i}`, 'xiaomi-token-plan-sgp', 'queued', 20 + i)),
+    ...Array.from({ length: 4 }, (_, i) => agent(`z${i}`, 'zai', 'queued', 40 + i)),
+  ];
+  assert.equal(admit(both).length, 20);
+});
+
+test('providerCaps override admits beyond the default per-provider cap only for that provider', () => {
+  const agents = [
+    ...Array.from({ length: 6 }, (_, i) => agent(`m${i}`, 'minimax', 'queued', i + 1)),
+    ...Array.from({ length: 6 }, (_, i) => agent(`z${i}`, 'zai', 'queued', 10 + i)),
+  ];
+  const admitted = admit(agents, { maxConcurrent: 16, perProvider: 2 });
+  assert.equal(admitted.filter((id) => id.startsWith('m')).length, 2);
+  assert.equal(admitted.filter((id) => id.startsWith('z')).length, 2);
 });
 
 test('terminal workers free their slots', () => {
