@@ -11,13 +11,13 @@ export type SchedulerLimits = {
   providerCaps?: Readonly<Record<string, number>>;
 };
 
-// Quality-first caps across the four providers (MiMo, Kimi, Z.AI, Codex
-// review). Kimi starts conservative at 2 while its subscription entitlement
-// and quota are being established; other providers stay at 4.
+// Flash-first caps: MiniMax Flash is the primary execution resource while
+// its quota nears reset, so it gets 8; Kimi stays conservative at 2 until
+// its quota refresh is verified; other providers stay at 4.
 export const DEFAULT_LIMITS: SchedulerLimits = {
   maxConcurrent: 20,
   perProvider: 4,
-  providerCaps: { 'kimi-coding': 2 },
+  providerCaps: { minimax: 8, 'kimi-coding': 2 },
 };
 
 /** Effective concurrency cap for one provider under the given limits. */

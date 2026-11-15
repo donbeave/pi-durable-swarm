@@ -34,6 +34,11 @@ test('running workers consume both slots', () => {
   assert.deepEqual(admit(agents), ['q1', 'q2']);
 });
 
+test('minimax cap is eight under the flash-first mandate', () => {
+  const minimax = Array.from({ length: 10 }, (_, i) => agent(`m${i}`, 'minimax', 'queued', i + 1));
+  assert.equal(admit(minimax).length, 8);
+});
+
 test('kimi cap is two while other providers stay at four', () => {
   const kimi = Array.from({ length: 6 }, (_, i) => agent(`k${i}`, 'kimi-coding', 'queued', i + 1));
   assert.equal(admit(kimi).length, 2);

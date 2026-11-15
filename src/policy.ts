@@ -18,12 +18,13 @@ export type EligibleModel = {
 const MIMO = 'xiaomi-token-plan-sgp';
 const KIMI = 'kimi-coding';
 
-// Quality-first policy (operator mandate): speed-optimized variants are
-// prohibited for every role, including retries and fallbacks. The check runs
-// on the model-id segment, case-insensitively, before eligibility, so a
-// prohibited variant is rejected by name and never silently substituted.
+// Flash-first policy (operator mandate): the named Flash models below are
+// eligible and preferred for new work. Other speed-optimized variants
+// (Fast/HighSpeed/Turbo/Lite) stay prohibited for every role, including
+// retries and fallbacks. The check runs on the model-id segment,
+// case-insensitively, before eligibility, so a prohibited variant is
+// rejected by name and never silently substituted.
 export const PROHIBITED_MODEL_TOKENS: readonly string[] = [
-  'flash',
   'fast',
   'highspeed',
   'high-speed',
@@ -47,7 +48,10 @@ export function assertNotProhibited(request: string): void {
 }
 
 export const ELIGIBLE_MODELS: readonly EligibleModel[] = [
-  { id: `${MIMO}/mimo-v2.6-pro`, provider: MIMO, modelId: 'mimo-v2.6-pro', thinking: ['off', 'high'], role: 'Complex implementation' },
+  { id: 'minimax/MiniMax-M3.1-Flash', provider: 'minimax', modelId: 'MiniMax-M3.1-Flash', thinking: ['low', 'medium', 'high', 'xhigh', 'max'], role: 'Primary implementation (expiring quota priority)' },
+  { id: 'zai/glm-5.3-flash', provider: 'zai', modelId: 'glm-5.3-flash', thinking: ['low', 'high', 'max'], role: 'Tests, debugging, verification' },
+  { id: `${MIMO}/mimo-v2.6-flash`, provider: MIMO, modelId: 'mimo-v2.6-flash', thinking: ['off', 'high'], role: 'Exploration, analysis, independent review' },
+  { id: `${MIMO}/mimo-v2.6-pro`, provider: MIMO, modelId: 'mimo-v2.6-pro', thinking: ['off', 'high'], role: 'Complex implementation (escalation)' },
   { id: `${KIMI}/k3.1-pro`, provider: KIMI, modelId: 'k3.1-pro', thinking: ['high', 'max'], role: 'Architecture, complex implementation, difficult debugging, security review' },
   { id: `${KIMI}/kimi-for-coding`, provider: KIMI, modelId: 'kimi-for-coding', thinking: ['high', 'max'], role: 'Regular implementation, tests, documentation, code review' },
   { id: 'zai/glm-5.3', provider: 'zai', modelId: 'glm-5.3', thinking: ['low', 'high', 'max'], role: 'Difficult fixes and integration' },
@@ -105,16 +109,16 @@ export type Role = {
 };
 
 /**
- * Built-in worker roles, exact pins only. Roles pinned to prohibited
- * speed-optimized variants (w1, w3, w4, w5) are disabled, not re-pinned:
- * their work moves to the quality models below. w8/w9 are the Kimi roles.
+ * Built-in worker roles, exact pins only. Flash roles (w1, w3, w4, w5) are
+ * the default execution path under the Flash-first mandate; Pro/Kimi roles
+ * are escalation-only. No role is disabled.
  */
 export const ROLES: Record<string, Role> = {
-  'w1-scout': { description: 'Exploration / audit scout (disabled: Flash pin prohibited)', model: `${MIMO}/mimo-v2.6-flash`, thinking: 'high', write: false, disabled: true },
+  'w1-scout': { description: 'Exploration / audit scout', model: `${MIMO}/mimo-v2.6-flash`, thinking: 'high', write: false },
   'w2-impl-strong': { description: 'Complex implementation', model: `${MIMO}/mimo-v2.6-pro`, thinking: 'high', write: true },
-  'w3-impl': { description: 'Implementation (disabled: Flash pin prohibited)', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'high', write: true, disabled: true },
-  'w4-audit': { description: 'Independent PR / security audit (disabled: Flash pin prohibited)', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'max', write: false, disabled: true },
-  'w5-tests': { description: 'Regression tests (disabled: Flash pin prohibited)', model: 'zai/glm-5.3-flash', thinking: 'high', write: true, disabled: true },
+  'w3-impl': { description: 'Implementation (MiniMax Flash, primary)', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'high', write: true },
+  'w4-audit': { description: 'Independent PR / security audit', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'max', write: false },
+  'w5-tests': { description: 'Regression tests', model: 'zai/glm-5.3-flash', thinking: 'high', write: true },
   'w6-fix-strong': { description: 'Difficult fix / integration', model: 'zai/glm-5.3', thinking: 'max', write: true },
   'w7-review': { description: 'Mandatory independent reviewer (Codex GPT-6.1-SOL, review-only)', model: 'openai-codex/gpt-6.1-sol', thinking: 'high', write: false },
   'w8-kimi-pro': { description: 'Kimi K3.1 Pro: architecture, complex implementation, difficult debugging, security review', model: `${KIMI}/k3.1-pro`, thinking: 'high', write: true },

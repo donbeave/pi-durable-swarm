@@ -34,28 +34,34 @@ test('unsupported thinking levels are rejected, never clamped', () => {
   assert.throws(() => assertThinking(resolveModel('zai/glm-5.3'), 'xhigh'), /not supported/);
 });
 
-test('allowlist is exactly the quality-first matrix', () => {
+test('allowlist is exactly the flash-first matrix', () => {
   assert.deepEqual(
     ELIGIBLE_MODELS.map((m) => m.id).sort(),
     [
       'kimi-coding/k3.1-pro',
       'kimi-coding/kimi-for-coding',
+      'minimax/MiniMax-M3.1-Flash',
       'openai-codex/gpt-6.1-sol',
+      'xiaomi-token-plan-sgp/mimo-v2.6-flash',
       'xiaomi-token-plan-sgp/mimo-v2.6-pro',
       'zai/glm-5.3',
+      'zai/glm-5.3-flash',
     ].sort(),
   );
 });
 
+test('flash models resolve exactly and are never treated as prohibited', () => {
+  assert.equal(resolveModel('minimax/MiniMax-M3.1-Flash').canonical, 'minimax/MiniMax-M3.1-Flash');
+  assert.equal(resolveModel('xiaomi/mimo-v2.6-flash').canonical, 'xiaomi-token-plan-sgp/mimo-v2.6-flash');
+  assert.equal(resolveModel('zai/glm-5.3-flash').canonical, 'zai/glm-5.3-flash');
+  assert.equal(prohibitedToken('minimax/MiniMax-M3.1-Flash'), null);
+});
+
 test('prohibited speed-optimized variants are rejected by name, never substituted', () => {
   for (const bad of [
-    'minimax/MiniMax-M3.1-Flash',
-    'xiaomi-token-plan-sgp/mimo-v2.6-flash',
-    'xiaomi/mimo-v2.6-flash',
-    'zai/glm-5.3-flash',
-    'zai/GLM-5.3-FLASH',
     'kimi-coding/k3.1-pro-highspeed',
     'kimi-coding/kimi-for-coding-highspeed',
+    'minimax/MiniMax-M2.7-highspeed',
     'acme/some-model-turbo',
     'acme/some-model-lite',
     'acme/fast-model',
@@ -79,10 +85,14 @@ test('kimi roles w8/w9 pin the verified subscription models with thinking on', (
   assert.equal(ROLES['w9-kimi-dev'].disabled, undefined);
 });
 
-test('roles pinned to prohibited variants are disabled', () => {
-  for (const name of ['w1-scout', 'w3-impl', 'w4-audit', 'w5-tests']) {
-    assert.equal(ROLES[name].disabled, true, name);
-    assert.notEqual(prohibitedToken(ROLES[name].model), null, name);
+test('flash roles are enabled and pin the flash-first primaries', () => {
+  assert.equal(ROLES['w1-scout'].model, 'xiaomi-token-plan-sgp/mimo-v2.6-flash');
+  assert.equal(ROLES['w3-impl'].model, 'minimax/MiniMax-M3.1-Flash');
+  assert.equal(ROLES['w4-audit'].model, 'minimax/MiniMax-M3.1-Flash');
+  assert.equal(ROLES['w5-tests'].model, 'zai/glm-5.3-flash');
+  for (const name of Object.keys(ROLES)) {
+    assert.equal(ROLES[name].disabled, undefined, name);
+    assert.equal(prohibitedToken(ROLES[name].model), null, name);
   }
 });
 

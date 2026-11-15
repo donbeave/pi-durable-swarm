@@ -332,7 +332,7 @@ export async function openRuntime(options: RuntimeOptions) {
     const existing = (await snapshot())?.requests[input.requestId];
     if (existing) return get(existing);
 
-    const roleName = input.role ?? 'w2-impl-strong';
+    const roleName = input.role ?? 'w3-impl';
     const role = ROLES[roleName];
     if (!role) throw new Error(`Unknown role "${roleName}". Roles: ${Object.keys(ROLES).join(', ')}`);
     if (role.disabled) {
