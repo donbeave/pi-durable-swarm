@@ -137,7 +137,7 @@ export default function durableSwarm(pi: ExtensionAPI) {
     label: 'Spawn swarm worker',
     description:
       'Spawn one durable swarm worker with an exact eligible model pin. Background by default: the worker is committed to durable storage before this call returns, is admitted by a hard scheduler (max 6 running, max 2 per provider), and survives Pi restarts. Roles: ' +
-      Object.entries(ROLES).map(([name, role]) => `${name} (${role.model}, thinking ${role.thinking})`).join(', ') +
+      Object.entries(ROLES).map(([name, role]) => `${name} (${role.model}, thinking ${role.thinking}${role.disabled ? ', DISABLED' : ''})`).join(', ') +
       '. Eligible model overrides: ' + ELIGIBLE_MODELS.map((model) => model.id).join(', ') +
       '. Any other model or unsupported thinking level is rejected, never substituted or clamped.',
     parameters: Type.Object(

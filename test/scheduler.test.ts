@@ -25,33 +25,29 @@ test('admits up to twelve globally and four per provider, oldest first', () => {
 
 test('running workers consume both slots', () => {
   const agents = [
-    agent('r1', 'minimax', 'running'),
-    agent('r2', 'minimax', 'running'),
-    agent('r3', 'minimax', 'running'),
-    agent('r4', 'minimax', 'running'),
-    agent('q1', 'minimax', 'queued', 1),
+    agent('r1', 'kimi-coding', 'running'),
+    agent('q1', 'kimi-coding', 'queued', 1),
     agent('q2', 'zai', 'queued', 2),
   ];
-  // MiniMax cap is 8, so q1 still fits; zai q2 follows in queued order.
+  // Kimi cap is 2, so one running worker leaves exactly one slot for q1;
+  // zai q2 follows in queued order.
   assert.deepEqual(admit(agents), ['q1', 'q2']);
 });
 
-test('minimax cap is eight while other providers stay at four', () => {
-  const minimax = Array.from({ length: 10 }, (_, i) => agent(`m${i}`, 'minimax', 'queued', i + 1));
-  assert.equal(admit(minimax).length, 8);
+test('kimi cap is two while other providers stay at four', () => {
+  const kimi = Array.from({ length: 6 }, (_, i) => agent(`k${i}`, 'kimi-coding', 'queued', i + 1));
+  assert.equal(admit(kimi).length, 2);
   const zai = Array.from({ length: 6 }, (_, i) => agent(`z${i}`, 'zai', 'queued', i + 1));
   assert.equal(admit(zai).length, 4);
 });
 
-test('xiaomi cap is eight and minimax plus xiaomi fit the raised global cap', () => {
-  const xiaomi = Array.from({ length: 10 }, (_, i) => agent(`x${i}`, 'xiaomi-token-plan-sgp', 'queued', i + 1));
-  assert.equal(admit(xiaomi).length, 8);
+test('four providers fit the global cap with kimi held at two', () => {
   const both = [
-    ...Array.from({ length: 8 }, (_, i) => agent(`m${i}`, 'minimax', 'queued', i + 1)),
-    ...Array.from({ length: 8 }, (_, i) => agent(`x${i}`, 'xiaomi-token-plan-sgp', 'queued', 20 + i)),
+    ...Array.from({ length: 4 }, (_, i) => agent(`m${i}`, 'xiaomi-token-plan-sgp', 'queued', i + 1)),
+    ...Array.from({ length: 2 }, (_, i) => agent(`k${i}`, 'kimi-coding', 'queued', 20 + i)),
     ...Array.from({ length: 4 }, (_, i) => agent(`z${i}`, 'zai', 'queued', 40 + i)),
   ];
-  assert.equal(admit(both).length, 20);
+  assert.equal(admit(both).length, 10);
 });
 
 test('providerCaps override admits beyond the default per-provider cap only for that provider', () => {

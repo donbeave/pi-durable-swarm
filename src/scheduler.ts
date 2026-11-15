@@ -11,14 +11,13 @@ export type SchedulerLimits = {
   providerCaps?: Readonly<Record<string, number>>;
 };
 
-// MiniMax and MiMo get raised caps: their published API limits
-// (MiniMax-M3.1-Flash 200 RPM / 10M TPM; MiMo V2.6 100 RPM / 10M TPM) leave
-// ample headroom for 8 concurrent long-running workers each, and the operator
-// wants both burned in parallel. Other providers stay at 4.
+// Quality-first caps across the four providers (MiMo, Kimi, Z.AI, Codex
+// review). Kimi starts conservative at 2 while its subscription entitlement
+// and quota are being established; other providers stay at 4.
 export const DEFAULT_LIMITS: SchedulerLimits = {
   maxConcurrent: 20,
   perProvider: 4,
-  providerCaps: { minimax: 8, 'xiaomi-token-plan-sgp': 8 },
+  providerCaps: { 'kimi-coding': 2 },
 };
 
 /** Effective concurrency cap for one provider under the given limits. */

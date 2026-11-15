@@ -16,12 +16,40 @@ export type EligibleModel = {
 };
 
 const MIMO = 'xiaomi-token-plan-sgp';
+const KIMI = 'kimi-coding';
+
+// Quality-first policy (operator mandate): speed-optimized variants are
+// prohibited for every role, including retries and fallbacks. The check runs
+// on the model-id segment, case-insensitively, before eligibility, so a
+// prohibited variant is rejected by name and never silently substituted.
+export const PROHIBITED_MODEL_TOKENS: readonly string[] = [
+  'flash',
+  'fast',
+  'highspeed',
+  'high-speed',
+  'turbo',
+  'lite',
+];
+
+export function prohibitedToken(request: string): string | null {
+  const modelId = request.split('/').pop()?.toLowerCase() ?? '';
+  return PROHIBITED_MODEL_TOKENS.find((token) => modelId.includes(token)) ?? null;
+}
+
+export function assertNotProhibited(request: string): void {
+  const token = prohibitedToken(request);
+  if (token) {
+    throw new Error(
+      `Model "${request}" is prohibited: speed-optimized variants (matched "${token}") are banned for all roles. ` +
+        'Use a standard or flagship model; never substitute a prohibited variant.',
+    );
+  }
+}
 
 export const ELIGIBLE_MODELS: readonly EligibleModel[] = [
-  { id: `${MIMO}/mimo-v2.6-flash`, provider: MIMO, modelId: 'mimo-v2.6-flash', thinking: ['off', 'high'], role: 'Exploration and audits' },
   { id: `${MIMO}/mimo-v2.6-pro`, provider: MIMO, modelId: 'mimo-v2.6-pro', thinking: ['off', 'high'], role: 'Complex implementation' },
-  { id: 'minimax/MiniMax-M3.1-Flash', provider: 'minimax', modelId: 'MiniMax-M3.1-Flash', thinking: ['low', 'medium', 'high', 'xhigh', 'max'], role: 'Implementation and review' },
-  { id: 'zai/glm-5.3-flash', provider: 'zai', modelId: 'glm-5.3-flash', thinking: ['low', 'high', 'max'], role: 'Regression tests and verification' },
+  { id: `${KIMI}/k3.1-pro`, provider: KIMI, modelId: 'k3.1-pro', thinking: ['high', 'max'], role: 'Architecture, complex implementation, difficult debugging, security review' },
+  { id: `${KIMI}/kimi-for-coding`, provider: KIMI, modelId: 'kimi-for-coding', thinking: ['high', 'max'], role: 'Regular implementation, tests, documentation, code review' },
   { id: 'zai/glm-5.3', provider: 'zai', modelId: 'glm-5.3', thinking: ['low', 'high', 'max'], role: 'Difficult fixes and integration' },
   {
     id: 'openai-codex/gpt-6.1-sol',
@@ -42,6 +70,7 @@ export type ResolvedModel = { provider: string; modelId: string; canonical: stri
  * providers, old generations, fuzzy names and bare model ids never resolve.
  */
 export function resolveModel(request: string): ResolvedModel {
+  assertNotProhibited(request);
   const normalized = request.startsWith('xiaomi/')
     ? `${MIMO}/${request.slice('xiaomi/'.length)}`
     : request;
@@ -66,16 +95,41 @@ export function assertThinking(model: ResolvedModel, thinking: string): Thinking
   return thinking as Thinking;
 }
 
-/** Built-in worker roles W1-W6, two per provider, exact pins only. */
-export const ROLES: Record<string, { description: string; model: string; thinking: Thinking; write: boolean }> = {
-  'w1-scout': { description: 'Exploration / audit scout', model: `${MIMO}/mimo-v2.6-flash`, thinking: 'high', write: false },
+export type Role = {
+  description: string;
+  model: string;
+  thinking: Thinking;
+  write: boolean;
+  /** Disabled roles keep their record for state recovery but reject spawns. */
+  disabled?: boolean;
+};
+
+/**
+ * Built-in worker roles, exact pins only. Roles pinned to prohibited
+ * speed-optimized variants (w1, w3, w4, w5) are disabled, not re-pinned:
+ * their work moves to the quality models below. w8/w9 are the Kimi roles.
+ */
+export const ROLES: Record<string, Role> = {
+  'w1-scout': { description: 'Exploration / audit scout (disabled: Flash pin prohibited)', model: `${MIMO}/mimo-v2.6-flash`, thinking: 'high', write: false, disabled: true },
   'w2-impl-strong': { description: 'Complex implementation', model: `${MIMO}/mimo-v2.6-pro`, thinking: 'high', write: true },
-  'w3-impl': { description: 'Implementation', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'high', write: true },
-  'w4-audit': { description: 'Independent PR / security audit', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'max', write: false },
-  'w5-tests': { description: 'Regression tests', model: 'zai/glm-5.3-flash', thinking: 'high', write: true },
+  'w3-impl': { description: 'Implementation (disabled: Flash pin prohibited)', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'high', write: true, disabled: true },
+  'w4-audit': { description: 'Independent PR / security audit (disabled: Flash pin prohibited)', model: 'minimax/MiniMax-M3.1-Flash', thinking: 'max', write: false, disabled: true },
+  'w5-tests': { description: 'Regression tests (disabled: Flash pin prohibited)', model: 'zai/glm-5.3-flash', thinking: 'high', write: true, disabled: true },
   'w6-fix-strong': { description: 'Difficult fix / integration', model: 'zai/glm-5.3', thinking: 'max', write: true },
   'w7-review': { description: 'Mandatory independent reviewer (Codex GPT-6.1-SOL, review-only)', model: 'openai-codex/gpt-6.1-sol', thinking: 'high', write: false },
+  'w8-kimi-pro': { description: 'Kimi K3.1 Pro: architecture, complex implementation, difficult debugging, security review', model: `${KIMI}/k3.1-pro`, thinking: 'high', write: true },
+  'w9-kimi-dev': { description: 'Kimi K2.8 Preview: regular implementation, tests, documentation, review', model: `${KIMI}/kimi-for-coding`, thinking: 'high', write: true },
 };
+
+/** Enabled roles only: every model must resolve and support its thinking level. */
+export function validateRoles(): void {
+  for (const [name, role] of Object.entries(ROLES)) {
+    if (role.disabled) continue;
+    const resolved = resolveModel(role.model);
+    assertThinking(resolved, role.thinking);
+    void name;
+  }
+}
 
 export function roleInstructions(name: string, write: boolean): string {
   const base =

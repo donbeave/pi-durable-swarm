@@ -37,7 +37,7 @@ test('spawn rejects an eligible model that the registry does not have, before cr
   const dir = mkdtempSync(join(tmpdir(), 'swarm-runtime-'));
   const runtime = await openRuntime({ directory: dir, models: createModels() });
   await assert.rejects(
-    runtime.spawn({ requestId: 'test:1', name: 'x', task: 'say hi', role: 'w3-impl', cwd: dir }),
+    runtime.spawn({ requestId: 'test:1', name: 'x', task: 'say hi', role: 'w2-impl-strong', cwd: dir }),
     /not available in the Pi model registry/,
   );
   const fleet = await runtime.snapshot();

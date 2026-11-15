@@ -332,15 +332,21 @@ export async function openRuntime(options: RuntimeOptions) {
     const existing = (await snapshot())?.requests[input.requestId];
     if (existing) return get(existing);
 
-    const roleName = input.role ?? 'w3-impl';
+    const roleName = input.role ?? 'w2-impl-strong';
     const role = ROLES[roleName];
     if (!role) throw new Error(`Unknown role "${roleName}". Roles: ${Object.keys(ROLES).join(', ')}`);
+    if (role.disabled) {
+      throw new Error(
+        `Role "${roleName}" is disabled: its model pin is a prohibited speed-optimized variant. ` +
+          'Use an enabled quality role (w2-impl-strong, w6-fix-strong, w7-review, w8-kimi-pro, w9-kimi-dev).',
+      );
+    }
     const model = resolveModel(input.model ?? role.model);
     const eligible = ELIGIBLE_MODELS.find((candidate) => candidate.id === model.canonical);
     if (eligible?.reviewOnly && roleName !== 'w7-review') {
       throw new Error(
         `Model ${model.canonical} is review-only and may only run as role w7-review. ` +
-          'Implementation, tests and fixes stay on MiMo, MiniMax and Z.AI workers.',
+          'Implementation, tests and fixes stay on MiMo Pro, Kimi and GLM-5.3 workers.',
       );
     }
     if (roleName === 'w7-review' && !eligible?.reviewOnly) {
